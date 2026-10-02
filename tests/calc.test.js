@@ -173,6 +173,31 @@ test('manual values override missing fetched data in the checklist', () => {
   assert.notEqual(byId.C15, 'unknown');
 });
 
+test('delta 0.30 is a pass (rounding tolerance) and A4 tolerates a small dip', () => {
+  const base = {
+    state: { account: { budget: 10000, cash: 10000 }, wheels: [], settings: DEFAULT_SETTINGS },
+    data: { symbol: 'X', quote: { price: 30 }, profile: { marketCap: 50e9 }, metrics: { epsTTM: 2, avgVolume: 3e6 }, priceVsMa200: -3.4, earnings: {}, dividends: {} },
+    option: { strike: 28, mid: 0.5, delta: -0.3049, dte: 35, expiry: '2026-12-01', openInterest: 800 },
+  };
+  const byId = (ctx) => Object.fromEntries(evaluateChecklist(buildChecklistContext(ctx)).items.map((i) => [i.id, i.status]));
+  assert.equal(byId(base).C11, 'pass');
+  assert.equal(byId(base).A4, 'pass');
+  const deep = { ...base, data: { ...base.data, priceVsMa200: -22 } };
+  assert.equal(byId(deep).A4, 'fail');
+});
+
+test('C15 resolves dividend status instead of staying unverified', () => {
+  const mk = (dividends, metrics) => buildChecklistContext({
+    state: { account: { budget: 10000, cash: 10000 }, wheels: [], settings: DEFAULT_SETTINGS },
+    data: { symbol: 'X', quote: { price: 30 }, profile: { marketCap: 50e9 }, metrics: { epsTTM: 2, avgVolume: 3e6, ...metrics }, priceVsMa200: 1, earnings: {}, dividends },
+    option: { strike: 28, mid: 0.5, delta: -0.2, dte: 35, expiry: '2026-12-01', openInterest: 800 },
+  });
+  const c15 = (ctx) => evaluateChecklist(ctx).items.find((i) => i.id === 'C15').status;
+  assert.equal(c15(mk({ next: null }, { dividendYield: 0 })), 'pass');       // no dividend
+  assert.equal(c15(mk({ next: null }, { dividendYield: 6.8 })), 'warn');     // pays, date unknown
+  assert.equal(c15(mk({ next: { exDate: '2026-11-09', estimated: true } }, { dividendYield: 6.8 })), 'pass');
+});
+
 test('dates display as DD/MM/YYYY and parse back to ISO', () => {
   assert.equal(toDMY('2026-11-09'), '09/11/2026');
   assert.equal(toDMY('09/11/2026'), '09/11/2026');

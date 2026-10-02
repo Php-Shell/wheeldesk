@@ -276,16 +276,26 @@ async function getDividends(symbol) {
       const upcoming = list
         .filter((d) => d.exDate && new Date(d.exDate) >= new Date(iso))
         .sort((a, b) => String(a.exDate).localeCompare(String(b.exDate)))[0] || null;
+      let next = upcoming ? { exDate: upcoming.exDate, payDate: upcoming.payDate || null, amount: upcoming.amount ?? null, estimated: false } : null;
+      if (!next) {
+        const past = list.filter((d) => d.exDate && d.exDate < iso).sort((a, b) => String(b.exDate).localeCompare(String(a.exDate)));
+        if (past[0]) {
+          const n = new Date(past[0].exDate);
+          n.setDate(n.getDate() + 91);
+          next = { exDate: n.toISOString().slice(0, 10), amount: past[0].amount ?? null, estimated: true };
+        }
+      }
       return ok('dividends', symbol, 'finnhub', {
-        next: upcoming ? { exDate: upcoming.exDate, payDate: upcoming.payDate || null, amount: upcoming.amount ?? null } : null,
+        pays: true,
+        next,
         list: list.slice(-8).map((d) => ({ exDate: d.exDate, payDate: d.payDate, amount: d.amount })),
       });
     }
   } catch { /* fall through to Nasdaq */ }
 
   const n = await nasdaqDividends(symbol).catch(() => null);
-  if (n) return n;
-  return unavailable('dividends', symbol, 'No dividend data found. The company may not pay a dividend — verify manually.', null);
+  if (n) return { ...n, data: { ...n.data, pays: true } };
+  return unavailable('dividends', symbol, 'No dividend history found on the free sources.', null);
 }
 
 async function getCandles(symbol, source) {

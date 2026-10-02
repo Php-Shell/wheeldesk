@@ -43,6 +43,8 @@ export const DEFAULT_SETTINGS = {
     ivMax: 60,
     ivLow: 20,
     ivHigh: 70,
+    trendPassPct: -5,
+    trendFailPct: -10,
   },
   recovery: {
     scenarioB: 10,
@@ -69,7 +71,7 @@ export const RISK_PRESETS = {
       returnMin: 6,
       returnMax: 20,
       returnHigh: 35,
-      thresholds: { openInterest: 1000, openInterestWarn: 300, spread: 0.05, spreadPct: 0.07, marketCap: 50_000_000_000, marketCapWarn: 10_000_000_000, volume: 2_000_000, ivMin: 25, ivMax: 55, ivLow: 18, ivHigh: 65 },
+      thresholds: { openInterest: 1000, openInterestWarn: 300, spread: 0.05, spreadPct: 0.07, marketCap: 50_000_000_000, marketCapWarn: 10_000_000_000, volume: 2_000_000, ivMin: 25, ivMax: 55, ivLow: 18, ivHigh: 65, trendPassPct: -3, trendFailPct: -8 },
     },
   },
   balanced: {
@@ -87,7 +89,7 @@ export const RISK_PRESETS = {
       returnMin: 10,
       returnMax: 30,
       returnHigh: 50,
-      thresholds: { openInterest: 500, openInterestWarn: 100, spread: 0.1, spreadPct: 0.1, marketCap: 10_000_000_000, marketCapWarn: 2_000_000_000, volume: 1_000_000, ivMin: 30, ivMax: 60, ivLow: 20, ivHigh: 70 },
+      thresholds: { openInterest: 500, openInterestWarn: 100, spread: 0.1, spreadPct: 0.1, marketCap: 10_000_000_000, marketCapWarn: 2_000_000_000, volume: 1_000_000, ivMin: 30, ivMax: 60, ivLow: 20, ivHigh: 70, trendPassPct: -5, trendFailPct: -10 },
     },
   },
   income: {
@@ -105,7 +107,7 @@ export const RISK_PRESETS = {
       returnMin: 15,
       returnMax: 40,
       returnHigh: 60,
-      thresholds: { openInterest: 300, openInterestWarn: 100, spread: 0.15, spreadPct: 0.12, marketCap: 5_000_000_000, marketCapWarn: 1_000_000_000, volume: 750_000, ivMin: 30, ivMax: 70, ivLow: 20, ivHigh: 80 },
+      thresholds: { openInterest: 300, openInterestWarn: 100, spread: 0.15, spreadPct: 0.12, marketCap: 5_000_000_000, marketCapWarn: 1_000_000_000, volume: 750_000, ivMin: 30, ivMax: 70, ivLow: 20, ivHigh: 80, trendPassPct: -8, trendFailPct: -15 },
     },
   },
 };

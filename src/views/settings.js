@@ -74,6 +74,8 @@ export default {
             ${field({ label: 'IV Rank max', name: 't_ivMax', value: s.thresholds.ivMax })}
             ${field({ label: 'IV Rank low warn', name: 't_ivLow', value: s.thresholds.ivLow })}
             ${field({ label: 'IV Rank high warn', name: 't_ivHigh', value: s.thresholds.ivHigh })}
+            ${field({ label: 'A4 pass: within % of 200-DMA', name: 't_trendPassPct', value: s.thresholds.trendPassPct, hint: 'e.g. -5 = up to 5% below is OK' })}
+            ${field({ label: 'A4 fail: below % of 200-DMA', name: 't_trendFailPct', value: s.thresholds.trendFailPct, hint: 'e.g. -10 = worse than 10% below is severe' })}
           </div>
           <h3 style="margin-top:18px">Recovery thresholds</h3>
           <div class="form-grid">
@@ -164,6 +166,8 @@ export default {
           ivMax: Number(v.t_ivMax),
           ivLow: Number(v.t_ivLow),
           ivHigh: Number(v.t_ivHigh),
+          trendPassPct: Number(v.t_trendPassPct),
+          trendFailPct: Number(v.t_trendFailPct),
         },
         recovery: { scenarioB: Number(v.r_scenarioB), scenarioC: Number(v.r_scenarioC), cutLoss: Number(v.r_cutLoss) },
       });

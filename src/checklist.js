@@ -51,15 +51,20 @@ export const CHECKLIST = [
       : { status: 'fail', detail: `Trailing 12-month EPS is negative (${eps.toFixed(2)}, ${source}).` };
   }),
 
-  item('A4', 'A', 'Not in a severe downtrend', 'Buying a falling knife increases the chance of staying assigned at a loss.', (c) => {
+  item('A4', 'A', 'Not in a severe downtrend', 'A severe downtrend (well below the 200-day average) is a falling knife. A small dip below the average is not necessarily a problem.', (c) => {
     const v = toNum(c.priceVsMa200, null);
+    const s = mergeSettings(c.settings).thresholds;
+    const passPct = toNum(s.trendPassPct, -5); // at/above this = not severe
+    const failPct = toNum(s.trendFailPct, -10); // below this = severe
     if (v === null) {
-      if (c.manual?.trendOverride) return { status: 'warn', detail: `200-day average unavailable. Override: ${c.manual.trendOverride}` };
+      if (c.manual?.trendOverride) return { status: 'pass', detail: `200-day average unavailable. Your override: ${c.manual.trendOverride}` };
       return { status: 'unknown', detail: '200-day average unavailable — check the chart or override with a reason.' };
     }
     if (v >= 0) return { status: 'pass', detail: `Price is ${v.toFixed(1)}% above its 200-day average.` };
-    if (c.manual?.trendOverride) return { status: 'warn', detail: `Price is ${Math.abs(v).toFixed(1)}% below the 200-day average. Override: ${c.manual.trendOverride}` };
-    return { status: 'fail', detail: `Price is ${Math.abs(v).toFixed(1)}% below its 200-day average.` };
+    if (v >= passPct) return { status: 'pass', detail: `Price is ${Math.abs(v).toFixed(1)}% below its 200-day average — within the ${Math.abs(passPct)}% tolerance, so not a severe downtrend.` };
+    if (v >= failPct) return { status: 'warn', detail: `Price is ${Math.abs(v).toFixed(1)}% below its 200-day average — a mild downtrend, watch it.` };
+    if (c.manual?.trendOverride) return { status: 'warn', detail: `Price is ${Math.abs(v).toFixed(1)}% below the 200-day average (severe). Your override: ${c.manual.trendOverride}` };
+    return { status: 'fail', detail: `Price is ${Math.abs(v).toFixed(1)}% below its 200-day average — a severe downtrend.` };
   }),
 
   item('A5', 'A', 'Average daily volume at least 1M shares', 'Liquid stock is easier to trade and to exit.', (c) => {
@@ -115,10 +120,11 @@ export const CHECKLIST = [
     const delta = toNum(c.option?.delta, null);
     const s = mergeSettings(c.settings);
     if (delta === null) return { status: 'unknown', detail: 'Delta unavailable — read the delta of your exact contract (Finviz option chain has a Delta column) or enter it from IBKR.' };
-    const abs = Math.abs(delta);
-    if (abs >= s.deltaMin && abs <= s.deltaMax) return { status: 'pass', detail: `Delta ${abs.toFixed(2)}.` };
-    if (abs < s.deltaMin) return { status: 'warn', detail: `Delta ${abs.toFixed(2)} is more conservative than the target band.` };
-    return { status: 'warn', detail: `Delta ${abs.toFixed(2)} is more aggressive than the target band.` };
+    // Round to 2 decimals so a displayed 0.30 (e.g. 0.3049) is treated as 0.30.
+    const abs = Math.round(Math.abs(delta) * 100) / 100;
+    if (abs >= s.deltaMin - 1e-9 && abs <= s.deltaMax + 1e-9) return { status: 'pass', detail: `Delta ${abs.toFixed(2)} is inside the ${s.deltaMin}–${s.deltaMax} band.` };
+    if (abs < s.deltaMin) return { status: 'warn', detail: `Delta ${abs.toFixed(2)} is more conservative than the ${s.deltaMin}–${s.deltaMax} band.` };
+    return { status: 'warn', detail: `Delta ${abs.toFixed(2)} is more aggressive than the ${s.deltaMin}–${s.deltaMax} band.` };
   }),
 
   item('C12', 'C', 'Implied volatility is reasonable', 'Too low means little premium; too high often signals an event.', (c) => {
@@ -129,8 +135,8 @@ export const CHECKLIST = [
       return {
         status: 'unknown',
         detail: iv !== null
-          ? `Implied volatility is ${iv.toFixed(1)}%. IV Rank is not on Yahoo — read it from the MarketChameleon link or enter it manually.`
-          : 'IV Rank unavailable — read it from the MarketChameleon link (not Yahoo) or enter it manually.',
+          ? `Implied volatility is ${iv.toFixed(1)}%. Enter MarketChameleon's "IV Percentile Rank" (0–100) — e.g. 87 means IV was lower 87% of the last year.`
+          : 'IV Rank unavailable — open the MarketChameleon link and enter its "IV Percentile Rank" (0–100).',
       };
     }
     if (ivRank >= s.ivMin && ivRank <= s.ivMax) return { status: 'pass', detail: `IV Rank ${ivRank}.` };
@@ -160,10 +166,21 @@ export const CHECKLIST = [
     return nextMs <= expMs ? { status: 'fail', detail: `Earnings on ${toDMY(next)} is before the ${toDMY(expiry)} expiry.` } : { status: 'pass', detail: `Next earnings ${toDMY(next)} is after the ${toDMY(expiry)} expiry.` };
   }),
 
-  item('C15', 'C', 'Ex-dividend dates noted', 'For a short put this is informational; it matters more for covered calls.', (c) => {
+  item('C15', 'C', 'Ex-dividend dates noted', 'For a short put this is informational; it matters more for covered calls. If the company pays no dividend there is nothing to watch.', (c) => {
     const d = c.dividends?.next;
-    if (!d) return { status: 'unknown', detail: 'No upcoming ex-dividend date found (the company may not pay one) — verify manually.' };
-    return { status: 'pass', detail: `Next ex-dividend ${toDMY(d.exDate)}${d.amount ? ` (${money(d.amount)}/share)` : ''}${d.estimated ? ' — estimated from the last ex-date, verify before relying on it' : ''}.` };
+    const list = c.dividends?.list || [];
+    const yieldPct = toNum(c.metrics?.dividendYield, null);
+    const knownPays = c.dividends?.pays;
+    const pays = knownPays !== undefined && knownPays !== null ? knownPays : yieldPct !== null ? yieldPct > 0 : d ? true : list.length ? true : null;
+    if (d?.exDate) {
+      return { status: 'pass', detail: `Next ex-dividend ${toDMY(d.exDate)}${d.amount ? ` (${money(d.amount)}/share)` : ''}${d.estimated ? ' — estimated from the last ex-date, verify before relying on it' : ''}.` };
+    }
+    if (pays === false) return { status: 'pass', detail: 'This company does not pay a dividend — nothing to watch (informational for a short put).' };
+    if (pays === true) {
+      const y = yieldPct != null ? `~${yieldPct.toFixed(2)}% yield` : 'pays a dividend';
+      return { status: 'warn', detail: `Pays a dividend (${y}) but the next ex-date was not found — check the Nasdaq dividend link before holding shares.` };
+    }
+    return { status: 'pass', detail: 'No dividend record found on the free sources — treated as non-dividend-paying (nothing to watch for a short put).' };
   }),
 
   item('D16', 'D', 'Enough free cash after the reserve', 'Never commit money you may need elsewhere.', (c) => {
