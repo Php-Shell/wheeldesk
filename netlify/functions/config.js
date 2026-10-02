@@ -9,8 +9,11 @@ export default async () =>
       providers: {
         finnhub: Boolean(process.env.FINNHUB_API_KEY),
         cboe: true,
+        yahoo: true,
+        marketdata: Boolean(process.env.MARKETDATA_TOKEN),
         tradier: Boolean(process.env.TRADIER_API_KEY),
       },
+      authRequired: false,
     }),
     { headers: { 'content-type': 'application/json', 'cache-control': 'public, max-age=300' } },
   );

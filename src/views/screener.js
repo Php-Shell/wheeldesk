@@ -8,6 +8,8 @@ const drafts = new Map();
 const requested = new Set();
 const chains = new Map();
 const chainLoading = new Set();
+const SEEDS = ['T', 'VZ', 'PFE', 'BAC', 'KO', 'KMI', 'CSCO', 'F', 'XLF'];
+const scanState = { running: false, results: [], progress: '' };
 
 function draftFor(w) {
   if (!drafts.has(w.symbol)) {
@@ -108,6 +110,91 @@ async function fetchChain(sym, ctx) {
   ctx.reload();
 }
 
+// ---- Auto-scan & rank -----------------------------------------------------
+
+function bestPut(chain, expiry, ctx) {
+  const s = mergeSettings(ctx.state.settings);
+  const maxColl = ctx.account.budget * s.maxPerWheelPct;
+  const puts = chain.rows.filter((r) => r.type === 'put' && r.expiry === expiry && r.strike && (r.bid > 0 || r.mid > 0) && r.delta != null && r.strike * 100 <= maxColl);
+  const pool = puts.length ? puts : chain.rows.filter((r) => r.type === 'put' && r.expiry === expiry && r.delta != null && r.strike);
+  if (!pool.length) return null;
+  pool.sort((a, b) => Math.abs(Math.abs(a.delta) - 0.22) - Math.abs(Math.abs(b.delta) - 0.22));
+  const r = pool[0];
+  return { strike: r.strike, bid: r.bid, ask: r.ask, mid: r.mid, delta: r.delta, openInterest: r.openInterest, volume: r.volume, iv: r.iv, expiry, dte: dte(expiry), affordable: r.strike * 100 <= maxColl };
+}
+
+function scanScore(result) {
+  return result.passCount * 2 - result.failCount * 3 - result.criticalFails.length * 10 - result.unknownCount * 0.3;
+}
+
+async function runScan(ctx, symbols) {
+  scanState.running = true;
+  scanState.results = [];
+  scanState.progress = '';
+  const marks = {};
+  for (const sym of symbols) {
+    scanState.progress = `Loading ${sym}…`;
+    paintProgress();
+    try {
+      const data = await ctx.providers.loadTickerData(sym, ctx.auth.token());
+      if (data?.quote?.price != null) marks[sym] = data.quote.price;
+      let option = null;
+      let provider = null;
+      const optRes = await ctx.providers.loadOptions(sym, '', ctx.auth.token());
+      if (optRes?.status === 'ok' && optRes.data?.rows?.length) {
+        provider = optRes.provider;
+        option = bestPut(optRes.data, pickExpiry(optRes.data.expirations), ctx);
+        if (option) option.provider = provider;
+      }
+      const context = buildChecklistContext({ state: ctx.state, data, option, manual: {}, settings: ctx.state.settings });
+      const result = evaluateChecklist(context);
+      scanState.results.push({ sym, price: data?.quote?.price ?? null, option, result, provider, score: scanScore(result) });
+    } catch (err) {
+      scanState.results.push({ sym, error: err.message, result: null, score: -999 });
+    }
+  }
+  if (Object.keys(marks).length) ctx.actions.setMarks(marks);
+  scanState.results.sort((a, b) => b.score - a.score);
+  scanState.running = false;
+  scanState.progress = '';
+  ctx.reload();
+}
+
+function paintProgress(msg) {
+  const el = document.getElementById('scanProgress');
+  if (el) el.textContent = msg || '';
+}
+
+function scanResultsTable(ctx) {
+  if (!scanState.results.length) return '';
+  return `<div class="table-wrap mt"><table class="table"><thead><tr>
+    <th>#</th><th>Ticker</th><th class="num">Price</th><th class="num">Score</th><th>Checklist</th><th>Verdict</th>
+    <th>Best put</th><th class="num">Net premium</th><th class="num">Ann.</th><th class="num">DTE</th><th>Source</th><th></th>
+  </tr></thead><tbody>
+  ${scanState.results.map((r, i) => {
+    if (r.error) return `<tr><td>${i + 1}</td><td class="sym">${escapeHtml(r.sym)}</td><td colspan="10" class="muted">${escapeHtml(r.error)}</td></tr>`;
+    const o = r.option;
+    const m = o ? putMetrics({ strike: o.strike, mid: o.mid, bid: o.bid, ask: o.ask, contracts: 1, commission: mergeSettings(ctx.state.settings).commission, daysToExpiry: o.dte, delta: o.delta }) : null;
+    const vc = r.result.verdict.className === 'pass' ? 'pass' : r.result.verdict.className === 'warn' ? 'warn' : 'fail';
+    return `<tr>
+      <td>${i + 1}</td>
+      <td class="sym">${escapeHtml(r.sym)}</td>
+      <td class="num">${r.price != null ? money(r.price) : '—'}</td>
+      <td class="num"><b>${r.score.toFixed(0)}</b></td>
+      <td>${r.result.score}</td>
+      <td>${badge(vc, r.result.verdict.label)}</td>
+      <td>${o ? `$${o.strike} · Δ${Math.abs(o.delta).toFixed(2)}${!o.affordable ? ' ⚠︎' : ''}` : '—'}</td>
+      <td class="num">${m ? money(m.netPremium) : '—'}</td>
+      <td class="num">${m?.annualized != null ? pct(m.annualized) : '—'}</td>
+      <td class="num">${o?.dte ?? '—'}</td>
+      <td>${escapeHtml(r.provider || '—')}</td>
+      <td>${o ? `<button class="btn btn-primary btn-sm" data-scan-open="${escapeHtml(r.sym)}" data-strike="${o.strike}" data-expiry="${o.expiry}" data-premium="${o.mid ?? ''}" data-delta="${o.delta}" data-oi="${o.openInterest ?? ''}">Open wheel →</button>` : ''}</td>
+    </tr>`;
+  }).join('')}
+  </tbody></table></div>
+  <p class="muted" style="font-size:12px;margin-top:8px">Score = passes minus fails/unknowns. Manual items (A6/A7) and IV Rank count as unknown in a scan, so confirm them on the ticker before trading. ⚠︎ means the strike is above your per-wheel limit.</p>`;
+}
+
 function checklistHtml(w, ctx) {
   const draft = draftFor(w);
   const option = activeOption(w, draft);
@@ -182,9 +269,7 @@ function watchBody(w, ctx) {
   const sourceLine = sources.length
     ? sources.map((s) => `<span class="source-tag">${escapeHtml(s.label)} · ${escapeHtml(s.provider)} · ${escapeHtml(s.fetchedAt ? fmtInZone(s.fetchedAt, 'America/New_York') + ' ET' : '')}</span>`).join('')
     : '<span class="source-tag">No live data yet — sign in and press Refresh, or enter values manually.</span>';
-  const authBanner = data?.authRequired
-    ? `<div class="notice info" style="margin-top:10px">Live market data needs a signed-in session (the proxy verifies it so your API key stays safe). <button class="btn btn-primary btn-sm" data-signin>Sign in</button> You can still enter every value manually.</div>`
-    : '';
+  const authBanner = '';
 
   return `
     <div class="grid grid-3" style="margin-bottom:8px">
@@ -200,7 +285,7 @@ function watchBody(w, ctx) {
     </div>
     <div class="source-line">${sourceLine}</div>
     ${authBanner}
-    ${!data?.authRequired && data?.messages?.length ? `<div class="notice info" style="margin-top:10px">${escapeHtml(data.messages.join(' '))}</div>` : ''}
+    ${data?.messages?.length ? `<div class="notice info" style="margin-top:10px">${escapeHtml(data.messages.join(' '))}</div>` : ''}
 
     <div class="grid grid-3 mt">
       <div class="field"><label>Would you happily own 100 shares at this price?</label>
@@ -221,7 +306,7 @@ function watchBody(w, ctx) {
 
     <div class="card-head" style="margin-top:14px"><h4>${tip('Strike picker', 'Load a free delayed CBOE option chain (with greeks), or type values from your IBKR screen.')}</h4>
       <div class="row" style="gap:8px">
-        <button class="btn btn-primary btn-sm" data-fetch-chain="${w.symbol}" ${chainLoading.has(w.symbol) ? 'disabled' : ''}>${chainLoading.has(w.symbol) ? 'Loading…' : '⤓ Load CBOE chain (greeks)'}</button>
+        <button class="btn btn-primary btn-sm" data-fetch-chain="${w.symbol}" ${chainLoading.has(w.symbol) ? 'disabled' : ''}>${chainLoading.has(w.symbol) ? 'Loading…' : '⤓ Load free chain (greeks)'}</button>
       </div>
     </div>
     ${(() => {
@@ -280,7 +365,6 @@ export default {
         </div>`).join('')
       : `<div class="card empty"><span class="empty-ico">⌕</span>Your watchlist is empty. Add a ticker above, or start with the suggested ideas.</div>`;
 
-    const seeds = ['T', 'VZ', 'PFE', 'BAC', 'KO', 'KMI', 'CSCO', 'F', 'XLF'];
     return `
       <div class="card">
         <div class="card-head">
@@ -289,10 +373,23 @@ export default {
         <div class="row" style="gap:10px;flex-wrap:wrap">
           <input id="screenerInput" placeholder="Ticker (e.g. KO)" style="max-width:220px" />
           <button class="btn btn-primary" id="screenerAdd">Add / load</button>
-          <span class="muted" style="font-size:12px">Starting ideas only — must pass the checklist with live data:</span>
-          <span class="chip-row">${seeds.map((s) => `<button class="chip" data-seed="${s}">${s}</button>`).join('')}</span>
+          <span class="muted" style="font-size:12px">Starting ideas (must pass the checklist with live data):</span>
+          <span class="chip-row">${SEEDS.map((s) => `<button class="chip" data-seed="${s}">${s}</button>`).join('')}</span>
         </div>
       </div>
+
+      <div class="card mt">
+        <div class="card-head">
+          <div><h3>Auto-scan &amp; rank</h3><p class="muted">Loads live data and free option chains for every ticker, scores each against the checklist, and ranks the best puts to sell. Confirm the manual items before trading.</p></div>
+          <div class="row" style="gap:8px">
+            <button class="btn btn-primary" id="scanIdeas" ${scanState.running ? 'disabled' : ''}>⚡ Scan safe ideas</button>
+            <button class="btn btn-secondary" id="scanWatch" ${scanState.running ? 'disabled' : ''}>Scan my watchlist</button>
+          </div>
+        </div>
+        <div id="scanProgress" class="muted" style="font-size:12.5px">${escapeHtml(scanState.progress)}</div>
+        ${scanResultsTable(ctx)}
+      </div>
+
       <div class="section-head"><h2>Watchlist</h2><button class="btn btn-secondary btn-sm" id="screenerReload">↻ Reload all data</button></div>
       ${body}
     `;
@@ -310,6 +407,19 @@ export default {
     if (input) input.onkeydown = (e) => { if (e.key === 'Enter') add(input.value); };
     root.querySelectorAll('[data-seed]').forEach((b) => (b.onclick = () => add(b.dataset.seed)));
     root.querySelector('#screenerReload')?.addEventListener('click', () => { requested.clear(); loadAll(ctx); });
+
+    root.querySelector('#scanIdeas')?.addEventListener('click', () => runScan(ctx, SEEDS));
+    root.querySelector('#scanWatch')?.addEventListener('click', () => {
+      const watch = ctx.state.watchlist.map((w) => w.symbol);
+      if (!watch.length) { toast('Your watchlist is empty — scanning the safe ideas instead.', 'warn'); runScan(ctx, SEEDS); return; }
+      runScan(ctx, [...new Set(watch)]);
+    });
+    root.querySelectorAll('[data-scan-open]').forEach((b) => {
+      b.onclick = () => {
+        const p = new URLSearchParams({ symbol: b.dataset.scanOpen, strike: b.dataset.strike, expiry: b.dataset.expiry, premium: b.dataset.premium, delta: b.dataset.delta, oi: b.dataset.oi });
+        ctx.go(`/new?${p.toString()}`);
+      };
+    });
 
     root.querySelectorAll('[data-toggle]').forEach((head) => {
       head.onclick = async (e) => {
@@ -334,10 +444,7 @@ export default {
     root.querySelectorAll('[data-signin]').forEach((b) => { b.onclick = () => ctx.openAccount(); });
 
     root.querySelectorAll('[data-fetch-chain]').forEach((b) => {
-      b.onclick = async () => {
-        if (!ctx.auth.get() && ctx.auth.configured()) { ctx.openAccount(); return; }
-        await fetchChain(b.dataset.fetchChain, ctx);
-      };
+      b.onclick = async () => { await fetchChain(b.dataset.fetchChain, ctx); };
     });
     root.querySelectorAll('[data-chain-expiry]').forEach((sel) => {
       sel.onchange = () => {
@@ -437,10 +544,6 @@ async function loadData(sym, ctx) {
   const w = ctx.state.watchlist.find((x) => x.symbol === sym);
   if (!w) return;
   requested.add(sym);
-  if (!ctx.auth.get() && ctx.auth.configured()) {
-    ctx.actions.updateWatch(sym, { data: { available: false, authRequired: true, messages: ['Sign in to load live market data.'] } });
-    return;
-  }
   try {
     const data = await ctx.providers.loadTickerData(sym, ctx.auth.token());
     if (data?.quote?.price != null) ctx.actions.setMark(sym, data.quote.price);

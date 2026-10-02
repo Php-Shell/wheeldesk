@@ -1,9 +1,10 @@
 import { wheelSummary, deriveAccount } from '../store.js';
 import { recoveryScenario, callCandidateAnalysis, adjustedCostBasis, mergeSettings } from '../calc.js';
-import { money, pct, escapeHtml, dte, todayISO } from '../format.js';
+import { money, pct, escapeHtml, dte, todayISO, addDays } from '../format.js';
 import { badge, tip, field, toast, openModal, readForm } from '../ui.js';
 
 let state = null;
+let lastWheelId = null;
 
 function loadFor(wheelId, ctx) {
   const w = ctx.state.wheels.find((x) => x.id === wheelId);
@@ -28,7 +29,11 @@ function loadFor(wheelId, ctx) {
 export default {
   title: 'Assignment & recovery',
   beforeRender(route) {
-    if (route?.params?.wheel) state = null;
+    const id = route?.params?.wheel || null;
+    if (id && id !== lastWheelId) {
+      state = null;
+      lastWheelId = id;
+    }
   },
   render(ctx) {
     const eligible = ctx.state.wheels.filter((w) => ['holding', 'short_call', 'short_put'].includes(w.state));
@@ -62,6 +67,7 @@ export default {
         <td class="num ${analysis && analysis.calledAwayPnl < 0 ? 'negative' : 'positive'}">${analysis ? money(analysis.calledAwayPnl) : '—'}</td>
         <td class="num">${analysis?.recoveryMonths != null ? `${analysis.recoveryMonths.toFixed(1)} mo` : '—'}</td>
         <td>${analysis ? badge(analysis.atOrAboveBasis ? 'pass' : 'warn', analysis.atOrAboveBasis ? 'At/above basis' : 'Below basis') : ''}</td>
+        <td>${analysis ? `<button class="btn btn-primary btn-sm" data-log-call="${i}">Sell this call →</button>` : ''}</td>
       </tr>`;
     }).join('');
 
@@ -73,6 +79,12 @@ export default {
     }[scenario.key] || '';
 
     return `
+      <div class="stepper">
+        <span class="step active"><span class="step-num">1</span>Gather numbers</span>
+        <span class="step"><span class="step-num">2</span>Analyse the situation</span>
+        <span class="step"><span class="step-num">3</span>Choose a covered call</span>
+        <span class="step"><span class="step-num">4</span>Log &amp; review</span>
+      </div>
       <div class="card">
         <div class="card-head"><div><h2>${tip('Assignment & recovery assistant', 'A calm, step-by-step plan for when you are holding shares below your cost basis.')}</h2>
           <p class="muted">All numbers are estimates. The decision is always yours.</p></div>
@@ -110,7 +122,7 @@ export default {
 
       <div class="card mt">
         <div class="card-head"><h3>Covered-call candidates</h3><button class="btn btn-secondary btn-sm" id="recAdd">+ Add candidate</button></div>
-        <div class="table-wrap"><table class="table"><thead><tr><th>Strike</th><th>Bid</th><th>DTE</th><th class="num">Net premium</th><th class="num">Annualized</th><th class="num">If called away</th><th class="num">Recovery est.</th><th></th></tr></thead><tbody>${candidateRows}</tbody></table></div>
+        <div class="table-wrap"><table class="table"><thead><tr><th>Strike</th><th>Bid</th><th>DTE</th><th class="num">Net premium</th><th class="num">Annualized</th><th class="num">If called away</th><th class="num">Recovery est.</th><th></th><th></th></tr></thead><tbody>${candidateRows}</tbody></table></div>
         <p class="muted" style="font-size:12px;margin-top:8px">Enter bid prices and DTE from your IBKR chain. "If called away" compares the strike with your adjusted cost basis. Recovery time assumes you repeatedly sell a call like this one.</p>
       </div>
 
@@ -127,6 +139,35 @@ export default {
   mount(root, ctx) {
     root.querySelector('#recWheel')?.addEventListener('change', (e) => { state = loadFor(e.target.value, ctx); ctx.go(`/recovery?wheel=${e.target.value}`); });
     root.querySelector('#recAdd')?.addEventListener('click', () => { state.candidates.push({ strike: '', bid: '', dte: '' }); ctx.reload(); });
+    root.querySelectorAll('[data-log-call]').forEach((btn) => {
+      btn.onclick = async () => {
+        // Read straight from the row's inputs so it always matches what's on screen.
+        const row = btn.closest('tr');
+        const strike = Number(row?.querySelector('[data-k="strike"]')?.value);
+        const bid = Number(row?.querySelector('[data-k="bid"]')?.value);
+        const dteVal = Number(row?.querySelector('[data-k="dte"]')?.value) || 35;
+        if (!(strike > 0) || !(bid > 0)) { toast('Enter a strike and bid first.', 'warn'); return; }
+        const shares = Number(root.querySelector('[name="shares"]')?.value) || Number(state.shares) || 100;
+        const contracts = Math.max(1, Math.round(shares / 100));
+        const expiry = addDays(new Date(), dteVal).toISOString().slice(0, 10);
+        const wheelId = ctx.route?.params?.wheel || state?.wheelId || state?.id;
+        if (!wheelId) { toast('Pick a wheel first.', 'warn'); return; }
+        if (!(await ctx.confirm(`Log a covered call: sell ${contracts}× $${strike} call expiring ${expiry} for $${bid}?`))) return;
+        ctx.actions.addTrade(wheelId, {
+          action: 'SELL_CALL_OPEN',
+          optionType: 'call',
+          strike,
+          expiry,
+          price: bid,
+          contracts,
+          fees: contracts * mergeSettings(ctx.state.settings).commission,
+          executedAt: new Date().toISOString(),
+          notes: 'From recovery assistant',
+        });
+        toast('Covered call logged — the wheel is now in the short-call stage.');
+        ctx.go(`/wheels?open=${wheelId}`);
+      };
+    });
     root.querySelectorAll('[data-rec-cand]').forEach((el) => {
       el.oninput = () => { state.candidates[Number(el.dataset.recCand)][el.dataset.k] = el.value; };
       el.onchange = () => ctx.reload();

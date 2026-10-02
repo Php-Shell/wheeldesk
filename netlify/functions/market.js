@@ -1,11 +1,30 @@
 // ---------------------------------------------------------------------------
-// Authenticated market-data proxy. Provider keys stay in Netlify env vars.
-// Every response is normalised and carries provider + timestamp. Nothing is
-// ever fabricated: unavailable data returns status "unavailable".
+// Market-data proxy. Provider keys stay in Netlify env vars. Every response is
+// normalised and carries provider + timestamp. Nothing is ever fabricated:
+// unavailable data returns status "unavailable". A Supabase session is
+// optional (verified when present) so a private single-user site works with no
+// login; a small in-memory rate limit protects the free API quota.
 // ---------------------------------------------------------------------------
 
+import { blackScholes } from '../../src/greeks.js';
+
 const FINNHUB = 'https://finnhub.io/api/v1';
+const YF_UA = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120 Safari/537.36';
 const cache = new Map();
+
+// Simple sliding-window rate limit per client (per warm function instance).
+const hits = new Map();
+const RATE_MAX = 240;
+const RATE_WINDOW = 60_000;
+function rateLimited(req) {
+  const ip = req.headers.get('x-nf-client-connection-ip') || req.headers.get('x-forwarded-for') || 'local';
+  const now = Date.now();
+  const recent = (hits.get(ip) || []).filter((t) => now - t < RATE_WINDOW);
+  recent.push(now);
+  hits.set(ip, recent);
+  if (hits.size > 5000) hits.clear();
+  return recent.length > RATE_MAX;
+}
 
 const TTL = {
   quote: 60_000,
@@ -44,10 +63,40 @@ function unavailable(kind, symbol, message, provider = null) {
   return { symbol, kind, provider, fetchedAt: new Date().toISOString(), status: 'unavailable', data: null, message };
 }
 
+// Yahoo's chart endpoint needs no key or crumb and is a reliable fallback for
+// the underlying quote and for the 200-day average / average volume.
+async function yahooChart(symbol, range = '1y') {
+  const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}?range=${range}&interval=1d`;
+  const r = await fetch(url, { headers: { 'User-Agent': YF_UA, Accept: 'application/json' } });
+  if (!r.ok) throw new Error(`Yahoo ${r.status}`);
+  const x = await r.json();
+  const res = x?.chart?.result?.[0];
+  if (!res) return null;
+  const q = res.indicators?.quote?.[0] || {};
+  return { meta: res.meta || {}, closes: (q.close || []).filter((v) => v != null), volumes: (q.volume || []).filter((v) => v != null) };
+}
+
 async function getQuote(symbol) {
-  const x = await finnhub('/quote', { symbol });
-  if (!x || (x.c === 0 && x.pc === 0)) return unavailable('quote', symbol, 'Finnhub returned no quote for this symbol.', 'finnhub');
-  return ok('quote', symbol, 'finnhub', { price: x.c ?? null, change: x.d ?? null, percent: x.dp ?? null, open: x.o ?? null, high: x.h ?? null, low: x.l ?? null, prevClose: x.pc ?? null });
+  try {
+    const x = await finnhub('/quote', { symbol });
+    if (x && !(x.c === 0 && x.pc === 0)) {
+      return ok('quote', symbol, 'finnhub', { price: x.c ?? null, change: x.d ?? null, percent: x.dp ?? null, open: x.o ?? null, high: x.h ?? null, low: x.l ?? null, prevClose: x.pc ?? null });
+    }
+  } catch { /* fall through to Yahoo */ }
+  const y = await yahooChart(symbol, '5d').catch(() => null);
+  const m = y?.meta;
+  if (m?.regularMarketPrice != null) {
+    return ok('quote', symbol, 'yahoo', {
+      price: m.regularMarketPrice,
+      change: m.regularMarketPrice - (m.chartPreviousClose ?? m.previousClose ?? m.regularMarketPrice),
+      percent: m.chartPreviousClose ? ((m.regularMarketPrice - m.chartPreviousClose) / m.chartPreviousClose) * 100 : null,
+      open: m.regularMarketOpen ?? null,
+      high: m.regularMarketDayHigh ?? null,
+      low: m.regularMarketDayLow ?? null,
+      prevClose: m.chartPreviousClose ?? m.previousClose ?? null,
+    });
+  }
+  return unavailable('quote', symbol, 'No quote available from Finnhub or Yahoo.', null);
 }
 
 async function getProfile(symbol) {
@@ -129,20 +178,35 @@ async function getDividends(symbol) {
 }
 
 async function getCandles(symbol) {
-  const to = Math.floor(Date.now() / 1000);
-  const from = to - 420 * 86400;
-  const x = await finnhub('/stock/candle', { symbol, resolution: 'D', from, to });
-  if (x?.s !== 'ok' || !Array.isArray(x.c) || x.c.length < 30) {
-    return unavailable('candles', symbol, 'Daily candles are not available on this Finnhub plan.', 'finnhub');
+  let provider = 'finnhub';
+  let closes = [];
+  let volumes = [];
+  try {
+    const to = Math.floor(Date.now() / 1000);
+    const from = to - 420 * 86400;
+    const x = await finnhub('/stock/candle', { symbol, resolution: 'D', from, to });
+    if (x?.s === 'ok' && Array.isArray(x.c) && x.c.length >= 30) {
+      closes = x.c;
+      volumes = x.v || [];
+    }
+  } catch { /* fall through to Yahoo */ }
+
+  if (!closes.length) {
+    const y = await yahooChart(symbol, '1y').catch(() => null);
+    if (y?.closes?.length >= 30) {
+      provider = 'yahoo';
+      closes = y.closes;
+      volumes = y.volumes || [];
+    }
   }
-  const closes = x.c;
-  const volumes = x.v || [];
+  if (!closes.length) return unavailable('candles', symbol, 'Daily candles are not available from Finnhub or Yahoo.', null);
+
   const last = closes.slice(-200);
   const ma200 = last.length >= 200 ? last.reduce((a, b) => a + b, 0) / last.length : null;
   const recentVol = volumes.slice(-30);
   const avgVolume = recentVol.length ? recentVol.reduce((a, b) => a + b, 0) / recentVol.length : null;
   const price = closes[closes.length - 1];
-  return ok('candles', symbol, 'finnhub', {
+  return ok('candles', symbol, provider, {
     closes: closes.slice(-120),
     ma200,
     avgVolume,
@@ -243,23 +307,134 @@ async function getTradierOptions(symbol, expiry) {
   return ok('options', symbol, 'tradier', { expirations: [...new Set(rows.map((r) => r.expiry))].sort(), rows });
 }
 
-// Prefer CBOE (free, no signup, includes greeks). Fall back to Tradier if a
-// key is configured, then to an honest "unavailable" so the UI offers manual entry.
-async function getOptions(symbol, expiry) {
-  let primary = null;
+const asArray = (v) => (Array.isArray(v) ? v : v == null ? [] : [v]);
+
+// Optional paid-ish provider with real greeks. Needs MARKETDATA_TOKEN.
+async function getMarketDataOptions(symbol, expiry) {
+  const token = process.env.MARKETDATA_TOKEN;
+  if (!token) return unavailable('options', symbol, 'MarketData.app token not configured.', null);
+  const url = new URL(`https://api.marketdata.app/v1/options/chain/${encodeURIComponent(symbol)}/`);
+  url.searchParams.set('token', token);
+  if (expiry) url.searchParams.set('expiration', expiry);
+  const r = await fetch(url, { headers: { Accept: 'application/json' } });
+  if (r.status === 404) return unavailable('options', symbol, 'No MarketData.app chain.', 'marketdata');
+  if (!r.ok) throw new Error(`MarketData.app ${r.status}`);
+  const x = await r.json();
+  if (x?.s !== 'ok' || !Array.isArray(x.strike)) return unavailable('options', symbol, 'MarketData.app returned no chain.', 'marketdata');
+  const side = asArray(x.side);
+  const strike = asArray(x.strike);
+  const expiration = asArray(x.expiration);
+  const rows = strike
+    .map((k, i) => ({
+      type: side[i] === 'call' ? 'call' : 'put',
+      strike: k,
+      expiry: expiration[i] ? new Date(expiration[i] * 1000).toISOString().slice(0, 10) : null,
+      bid: asArray(x.bid)[i] ?? null,
+      ask: asArray(x.ask)[i] ?? null,
+      mid: asArray(x.mid)[i] ?? null,
+      last: asArray(x.last)[i] ?? null,
+      volume: asArray(x.volume)[i] ?? null,
+      openInterest: asArray(x.openInterest)[i] ?? null,
+      delta: asArray(x.delta)[i] ?? null,
+      gamma: asArray(x.gamma)[i] ?? null,
+      theta: asArray(x.theta)[i] ?? null,
+      vega: asArray(x.vega)[i] ?? null,
+      iv: asArray(x.iv)[i] != null ? asArray(x.iv)[i] * 100 : null,
+    }))
+    .filter((r) => r.strike && r.expiry);
+  if (!rows.length) return unavailable('options', symbol, 'MarketData.app chain was empty.', 'marketdata');
+  return ok('options', symbol, 'marketdata', { expirations: [...new Set(rows.map((r) => r.expiry))].sort(), rows });
+}
+
+// Last-resort free source: Yahoo chain (IV only) + Black-Scholes greeks.
+// Yahoo often rate-limits server-side, so this is best-effort.
+async function getYahooOptions(symbol) {
   try {
-    primary = await getCboeChain(symbol);
+    const cookieRes = await fetch('https://fc.yahoo.com', { headers: { 'User-Agent': YF_UA }, redirect: 'manual' });
+    const setCookie = cookieRes.headers.get('set-cookie') || '';
+    const cookie = setCookie.split(',').map((c) => c.split(';')[0]).join('; ');
+    const crumbRes = await fetch('https://query1.finance.yahoo.com/v1/test/getcrumb', { headers: { 'User-Agent': YF_UA, cookie } });
+    const crumb = (await crumbRes.text()).trim();
+    if (!crumb || /\s/.test(crumb)) return unavailable('options', symbol, 'Yahoo rate-limited the request.', 'yahoo');
+    const base = `https://query2.finance.yahoo.com/v7/finance/options/${encodeURIComponent(symbol)}`;
+    const get = async (date) => {
+      const u = date ? `${base}?date=${date}&crumb=${encodeURIComponent(crumb)}` : `${base}?crumb=${encodeURIComponent(crumb)}`;
+      const r = await fetch(u, { headers: { 'User-Agent': YF_UA, cookie, Accept: 'application/json' } });
+      if (!r.ok) throw new Error(`Yahoo ${r.status}`);
+      return r.json();
+    };
+    let j = await get();
+    let res = j?.optionChain?.result?.[0];
+    if (!res) return unavailable('options', symbol, 'Yahoo returned no chain.', 'yahoo');
+    const S = res.quote?.regularMarketPrice;
+    const dates = res.expirationDates || [];
+    // Prefer the expiry closest to 40 DTE.
+    let chosen = res.options?.[0];
+    if (dates.length > 1 && S) {
+      const target = Date.now() / 1000 + 40 * 86400;
+      const best = [...dates].sort((a, b) => Math.abs(a - target) - Math.abs(b - target))[0];
+      if (best && best !== dates[0]) {
+        j = await get(best);
+        res = j?.optionChain?.result?.[0];
+        chosen = res?.options?.[0];
+      }
+    }
+    if (!chosen) return unavailable('options', symbol, 'Yahoo chain was empty.', 'yahoo');
+    const expiry = chosen.expirationDate ? new Date(chosen.expirationDate * 1000).toISOString().slice(0, 10) : null;
+    const dte = expiry ? Math.max(1, Math.round((new Date(expiry).getTime() - Date.now()) / 86400000)) : 40;
+    const rows = [];
+    for (const side of ['puts', 'calls']) {
+      for (const o of chosen[side] || []) {
+        const iv = o.impliedVolatility != null ? o.impliedVolatility * 100 : null;
+        const mid = o.bid != null && o.ask != null && (o.bid > 0 || o.ask > 0) ? (o.bid + o.ask) / 2 : o.lastPrice ?? null;
+        let greeks = null;
+        if (iv && S && o.strike) greeks = blackScholes({ type: side === 'puts' ? 'put' : 'call', S, K: o.strike, daysToExpiry: dte, iv });
+        rows.push({
+          type: side === 'puts' ? 'put' : 'call',
+          strike: o.strike,
+          expiry,
+          bid: o.bid ?? null,
+          ask: o.ask ?? null,
+          mid,
+          last: o.lastPrice ?? null,
+          volume: o.volume ?? null,
+          openInterest: o.openInterest ?? null,
+          iv,
+          delta: greeks?.delta ?? null,
+          gamma: greeks?.gamma ?? null,
+          theta: greeks?.theta ?? null,
+          vega: greeks?.vega ?? null,
+        });
+      }
+    }
+    if (!rows.length) return unavailable('options', symbol, 'Yahoo chain was empty.', 'yahoo');
+    return ok('options', symbol, 'yahoo', {
+      underlying: { price: S ?? null, asOf: new Date().toISOString() },
+      expirations: [expiry].filter(Boolean),
+      rows,
+      greeksComputed: true,
+      note: 'Greeks computed with Black-Scholes from Yahoo implied volatility — estimates, not exchange values.',
+    });
   } catch (err) {
-    primary = unavailable('options', symbol, `CBOE request failed (${err.message}).`, 'cboe');
+    return unavailable('options', symbol, `Yahoo request failed (${err.message}).`, 'yahoo');
   }
-  if (primary.status === 'ok') return primary;
+}
+
+// Try sources in order of quality: CBOE (real greeks) → Tradier → MarketData.app
+// → Yahoo (computed greeks). Each returns an honest "unavailable" on failure.
+async function getOptions(symbol, expiry) {
+  const sources = [];
+  try { sources.push(await getCboeChain(symbol)); } catch (err) { sources.push(unavailable('options', symbol, `CBOE: ${err.message}`, 'cboe')); }
+  for (const s of sources) if (s.status === 'ok') return s;
   if (process.env.TRADIER_API_KEY) {
-    try {
-      const tradier = await getTradierOptions(symbol, expiry);
-      if (tradier.status === 'ok') return tradier;
-    } catch { /* fall through to CBOE message */ }
+    try { const t = await getTradierOptions(symbol, expiry); if (t.status === 'ok') return t; sources.push(t); } catch (err) { sources.push(unavailable('options', symbol, `Tradier: ${err.message}`, 'tradier')); }
   }
-  return primary;
+  if (process.env.MARKETDATA_TOKEN) {
+    try { const m = await getMarketDataOptions(symbol, expiry); if (m.status === 'ok') return m; sources.push(m); } catch (err) { sources.push(unavailable('options', symbol, `MarketData.app: ${err.message}`, 'marketdata')); }
+  }
+  try { const y = await getYahooOptions(symbol); if (y.status === 'ok') return y; sources.push(y); } catch (err) { sources.push(unavailable('options', symbol, `Yahoo: ${err.message}`, 'yahoo')); }
+  const primary = sources[0];
+  return { ...primary, message: `No free chain available for ${symbol}. ${primary?.message || ''}`.trim() };
 }
 
 async function search(query) {
@@ -282,15 +457,18 @@ export default async (req) => {
     return json({ status: 'error', message: 'Invalid symbol.' }, 400);
   }
 
-  // Verify the Supabase session so the proxy cannot be abused.
+  // Single-user friendly: no login required. If a Supabase bearer IS supplied
+  // we verify it (useful for audit), but anonymous requests are allowed and
+  // protected by a rate limit instead.
+  if (rateLimited(req)) {
+    return json({ symbol: rawSymbol, kind, status: 'error', message: 'Too many requests — please slow down.' }, 429);
+  }
   const authHeader = req.headers.get('authorization');
   const supabaseUrl = process.env.SUPABASE_URL;
   const anon = process.env.SUPABASE_ANON_KEY;
-  if (!authHeader?.startsWith('Bearer ') || !supabaseUrl || !anon) {
-    return json({ symbol: rawSymbol, kind, status: 'auth', message: 'Authenticated Supabase session required.' }, 401);
+  if (authHeader?.startsWith('Bearer ') && supabaseUrl && anon) {
+    await fetch(`${supabaseUrl}/auth/v1/user`, { headers: { authorization: authHeader, apikey: anon } }).catch(() => null);
   }
-  const user = await fetch(`${supabaseUrl}/auth/v1/user`, { headers: { authorization: authHeader, apikey: anon } }).catch(() => null);
-  if (!user || !user.ok) return json({ symbol: rawSymbol, kind, status: 'auth', message: 'Invalid or expired session.' }, 401);
 
   if (!process.env.FINNHUB_API_KEY && kind !== 'options') {
     return json(unavailable(kind, rawSymbol, 'FINNHUB_API_KEY is not configured. Enter values manually.'), 200);

@@ -11,7 +11,8 @@ A beginner-friendly dashboard for running the **cash-secured put + wheel** strat
 | Area | What you get |
 | --- | --- |
 | **Dashboard** | Budget, available cash, collateral, premiums, realized/unrealized P&L, return %, win rate, "Today's actions", and 4 charts (net worth, premium income, P&L by ticker, allocation). |
-| **Screener** | Type a ticker → loads free fundamentals (price, market cap, EPS, volume, 52-week range, earnings, dividends, 200-day average) and runs an **18-point checklist** with ✅ / ⚠️ / ❌ / ❔ and a clear verdict. |
+| **Screener** | **Auto-scan & rank**: loads live fundamentals + free option chains for your watchlist or a set of safe ideas, scores each against the checklist, and ranks the best puts. Also lets you inspect any ticker manually. |
+| **Risk profiles** | One-click Safest / Balanced / Higher-income presets that set every threshold for you, with plain-English explanations. |
 | **New wheel wizard** | 5 guided steps: ticker → strike & expiry → honest review of the numbers → exact IBKR click path → log the real fill. |
 | **Wheels** | Event-sourced ledger with a visual state machine (short put → holding → short call → complete), a dated timeline, running cost basis, and one-click actions (buy to close, roll, assigned, sell call, called away, dividend, sell shares, close). |
 | **Recovery assistant** | If you're stuck holding shares: computes your adjusted cost basis, classifies A/B/C/D, compares covered-call candidates and recovery time, and gives plain-English exit instructions. |
@@ -49,9 +50,10 @@ Go to **Site configuration → Environment variables** and add these exact names
 
 | Name | Value | Required |
 | --- | --- | --- |
-| `SUPABASE_URL` | your Supabase project URL | ✅ yes |
-| `SUPABASE_ANON_KEY` | your Supabase **anon** key | ✅ yes |
 | `FINNHUB_API_KEY` | your Finnhub key | ✅ yes |
+| `SUPABASE_URL` | your Supabase project URL | optional (sync only) |
+| `SUPABASE_ANON_KEY` | your Supabase **anon** key | optional (sync only) |
+| `MARKETDATA_TOKEN` | MarketData.app token | optional |
 | `TRADIER_API_KEY` | Tradier developer key | optional |
 | `TRADIER_BASE_URL` | `https://api.tradier.com` | optional |
 
@@ -60,10 +62,12 @@ Then **Deploys → Trigger deploy → Clear cache and deploy site**.
 > Never put a Supabase **service-role** key in these variables. Only the **anon** key is safe, and only because RLS is enabled.
 
 ### 5. First run
-1. Open your Netlify URL.
-2. Click the avatar (top-right) → **Create account**. Confirm your email if Supabase asks, then **Sign in**.
-   - *Why sign in?* The market-data proxy checks your Supabase session before calling Finnhub, so your API key is never exposed to the browser.
-3. Go to **Settings → Load demo data** to explore three fictional wheels, or start with the **Screener**.
+**No login needed.** Open your Netlify URL and start using it immediately — data loads right away. You only need to sign in if you want to sync your ledger to Supabase across devices (avatar top-right).
+
+1. On the Dashboard, pick a **risk profile** (Safest / Balanced / Higher income).
+2. Open the **Screener** and press **⚡ Scan safe ideas** — it loads live data and free option chains, ranks the best puts, and shows a score.
+3. Click **Open wheel →** on a good candidate and follow the 5-step wizard.
+4. Or use **Settings → Load demo data** to explore three fictional wheels first.
 
 ---
 
@@ -89,13 +93,14 @@ npm run serve   # plain static server (no functions; market data unavailable)
 
 ## How to use it (the loop)
 
-1. **Screener** → add a ticker → press *Refresh data*. Read the fundamentals and the 18-point checklist.
-2. Tick the two required manual confirmations ("I'd happily own it", "not a meme / IPO / biotech / leveraged ETF") and press **Load CBOE chain (greeks)** to auto-fill real put strikes (or type them from IBKR if the symbol isn't listed).
-3. If the verdict is *Good candidate*, press **Open a wheel with this setup**.
-4. **New wheel wizard** → review the premium, collateral, breakeven, annualized return and **maximum loss**, then follow the IBKR instructions and log the real fill.
-5. **Wheels** → track it. The app tells you the next step (take profit at ~50%, roll near 21 DTE, avoid earnings).
-6. If assigned → **Recovery** gives you a plan. If you need more time → **Roll**.
-7. **Journal** → export CSV for your records/taxes.
+1. **Choose a risk profile** on the Dashboard (or Settings). This sets every threshold for you.
+2. **Screener → ⚡ Scan safe ideas** ranks candidates automatically (live data + free chains). Or add your own tickers and press *Refresh data*.
+3. Open a ticker to see the 18-point checklist. Confirm the two manual items ("I'd happily own it", "not a meme / IPO / biotech / leveraged ETF"); the rest fills from live data. **Load free chain (greeks)** auto-fills real put strikes.
+4. If the verdict is *Good candidate*, press **Open a wheel with this setup**.
+5. **New wheel wizard** → review premium, collateral, breakeven, annualized return and **maximum loss**, follow the IBKR instructions, and log the real fill.
+6. **Wheels** → the app tells you the next step (take profit at ~50%, roll near 21 DTE, avoid earnings). Use the action buttons for every event (buy to close, roll, expired, assigned, sell call, called away, dividend, sell shares, close).
+7. If assigned → **Recovery**. It gathers the numbers, classifies the situation (A/B/C/D), compares covered calls and recovery time, and lets you **sell the chosen call in one click** to start wheeling the shares back out. If you need more time → **Roll**.
+8. **Journal** → monthly summaries, closed-wheel lessons, CSV/JSON export.
 
 ---
 
@@ -104,12 +109,16 @@ npm run serve   # plain static server (no functions; market data unavailable)
 - **Finnhub (free)** provides the quote, company profile, market cap, trailing EPS, average volume, 52-week range, earnings dates and dividend dates. Every value shows its source and timestamp.
 - **Options chains with greeks come from CBOE** (free, **no signup, no API key**). Press **Load CBOE chain (greeks)** in the Screener and it fills the strike picker with real puts — bid, ask, delta, IV, open interest, volume and mid — picking the expiry closest to 40 DTE and the strikes nearest delta 0.22. CBOE data is **delayed ~15 minutes**. Coverage is CBOE-listed US stocks/ETFs; if your symbol is not listed, the app says so and you enter values manually.
 - **IBKR**: your account has chains and greeks, but they cannot be fetched from a Netlify function — the TWS API needs a local TWS/IB Gateway socket, the Client Portal Web API needs a locally-running gateway or interactive OAuth + a market-data subscription, and OPRA options data is usually a paid add-on. So IBKR stays a **manual entry / verification** source here, not an automated one. (If you ever want it, the realistic option is a small local companion app on your own computer, not a hosted function.)
-- **Tradier** remains an optional fallback (`TRADIER_API_KEY`). CBOE is tried first.
+- **Yahoo Finance chart** (free, no key) is the fallback for the **underlying quote**, the **200-day average** and **average volume** when Finnhub's free plan blocks candles. So items A4/A5 usually resolve automatically now.
+- **Provider order for chains:** CBOE → Tradier (if key) → MarketData.app (if token) → Yahoo. The app shows which provider was used.
+- **Greeks:** CBOE and MarketData.app return exchange greeks. If only IV is available (e.g. Yahoo), the app **computes delta/gamma/theta/vega with Black-Scholes** and labels them as estimates. Same calculator powers the `src/greeks.js` unit tests.
+- **MarketData.app** is an optional token-based provider with real greeks; set `MARKETDATA_TOKEN` to enable it as a fallback.
+- **Tradier** remains an optional fallback (`TRADIER_API_KEY`).
 - **IV Rank** is not available from free data (it needs a year of IV history). The app shows the actual IV from the chain and keeps IV Rank as a manual field. Item C12 stays "Not verified" until you enter it — it never guesses.
-- **200-day moving average**: Finnhub's free plan often blocks daily candles. If it is unavailable, item A4 stays "Not verified" and you can add a short written override.
+- **200-day moving average**: Finnhub's free plan often blocks daily candles; the Yahoo fallback covers it. If both fail, item A4 stays "Not verified" and you can add a short written override.
 - **Anything that cannot be fetched stays ❔ "Not verified"**, never "Pass". Unverified critical items (price fit, happy-to-own, earnings, cash) push the verdict to *Proceed with caution* or *Avoid*.
 
-Alternatives if CBOE coverage disappoints: **Alpaca** (free tier includes delayed options snapshots with greeks), **MarketData.app** (free tier), **Polygon.io** (paid for options), or **Yahoo Finance + Black-Scholes** (chain without greeks, then compute them — labelled as our estimate). The provider layer in `netlify/functions/market.js` is pluggable, so any of these can be added as a fallback.
+Alternatives if CBOE coverage disappoints: **MarketData.app** (free tier, real greeks — already wired via `MARKETDATA_TOKEN`), **Alpaca** (free tier includes delayed options snapshots with greeks), or **Polygon.io** (paid for options). The provider layer in `netlify/functions/market.js` is pluggable, so any of these can be added as a fallback.
 
 ---
 
@@ -158,7 +167,7 @@ tests/calc.test.js         unit tests
 ## Security notes
 
 - API keys live only in Netlify environment variables and are used server-side.
-- The proxy validates symbols, whitelists endpoints, verifies your Supabase session on every call, and caches responses to respect free-tier limits.
+- The proxy validates symbols, whitelists endpoints, rate-limits requests per client, and caches responses to respect free-tier limits. A Supabase session is **optional** (verified when supplied); it is not required to load data, so a private single-user deployment works with no login.
 - Supabase RLS means each user can only read/write their own rows, even though the anon key is public.
 - The browser stores your ledger in `localStorage`; cloud sync is explicit (you press *Sync now*). Sync failures are shown, never silently overwritten.
 
@@ -168,9 +177,9 @@ tests/calc.test.js         unit tests
 
 | Symptom | Fix |
 | --- | --- |
-| Screener says "Sign in to load live market data" | Create/sign in to an account (top-right avatar). Live data needs a session. |
 | "FINNHUB_API_KEY is not configured" | Add the variable in Netlify and redeploy. |
-| "No quote for this symbol" | Check the ticker symbol; some symbols aren't covered by Finnhub free. |
+| "No quote for this symbol" | Check the ticker symbol; the app falls back to Yahoo, then asks you to enter values manually. |
+| "No free chain available" | The symbol isn't listed on CBOE and Yahoo was rate-limited. Enter strike/bid/delta manually from IBKR — every calculation still works. |
 | Data all shows "Not verified" | You're offline or the function failed — enter values manually; every calculation still works. |
 | Sign-up email never arrives | Use a real address, or disable email confirmation in Supabase → Authentication → Providers → Email for personal use. |
 | Sync says "conflict" | The cloud copy is newer. Use **Pull from cloud** in Settings to review it. |

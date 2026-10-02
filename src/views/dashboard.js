@@ -1,5 +1,5 @@
 import { wheelSummary } from '../store.js';
-import { mergeSettings } from '../calc.js';
+import { mergeSettings, RISK_PRESETS } from '../calc.js';
 import { money, pct, signedPct, escapeHtml, marketStatus } from '../format.js';
 import { badge, chart, drawChart, chartColors, tip } from '../ui.js';
 
@@ -79,7 +79,20 @@ export default {
       <div class="card"><div class="stat"><span class="stat-label">${escapeHtml(label)}</span>
       <span class="stat-value ${cls}">${value}</span><span class="stat-sub">${sub}</span></div></div>`;
 
+    const onboarding = !state.meta?.riskProfile
+      ? `<div class="card mb" style="border-left:4px solid var(--brand)">
+          <div class="card-head"><div><h3>👋 Start here — 3 steps</h3><p class="muted">New to this? Follow these once.</p></div></div>
+          <ol style="line-height:1.9;padding-left:20px;margin:0 0 12px">
+            <li><b>Pick your risk profile</b> (safest / balanced / higher income).</li>
+            <li>Open the <a href="#/screener">Screener</a> and press <b>Scan safe ideas</b> to rank candidates automatically.</li>
+            <li>Click <b>Open a wheel</b> on a good candidate and follow the 5-step wizard.</li>
+          </ol>
+          <div class="row wrap">${Object.entries(RISK_PRESETS).map(([k, p]) => `<button class="btn ${k === 'balanced' ? 'btn-primary' : 'btn-secondary'} btn-sm" data-preset="${k}">${escapeHtml(p.label)}</button>`).join('')}</div>
+        </div>`
+      : '';
+
     return `
+      ${onboarding}
       <div class="grid grid-4">
         ${metric('Budget', money(account.budget), `Net worth ${money(account.netLiquidation)}`, account.netLiquidation >= account.budget ? 'positive' : 'negative')}
         ${metric('Available cash', money(account.availableCash), `Reserve ${money(account.reserve)} protected`)}
@@ -152,6 +165,9 @@ export default {
   },
   mount(root, ctx) {
     const { state, account } = ctx;
+    root.querySelectorAll('[data-preset]').forEach((b) => {
+      b.onclick = () => { ctx.actions.applyPreset(b.dataset.preset); ctx.toast('Risk profile applied. You can fine-tune it in Settings.'); ctx.reload(); };
+    });
     root.querySelectorAll('[data-open-wheel]').forEach((b) => {
       b.onclick = () => ctx.go(`/wheels?open=${b.dataset.openWheel}`);
     });

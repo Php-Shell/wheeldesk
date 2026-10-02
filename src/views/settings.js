@@ -1,4 +1,4 @@
-import { mergeSettings, selfTest } from '../calc.js';
+import { mergeSettings, selfTest, RISK_PRESETS } from '../calc.js';
 import { money, pct, escapeHtml, localTimeZone, downloadText } from '../format.js';
 import { tradesToCsv, buildBackup, parseBackup } from '../export.js';
 import { field, readForm, toast, openModal, confirmDialog, badge } from '../ui.js';
@@ -12,8 +12,21 @@ export default {
     const session = ctx.auth.get();
     const tz = s.timezone || localTimeZone();
 
+    const currentPreset = ctx.state.meta?.riskProfile || '';
     return `
-      <div class="grid grid-2">
+      <div class="card">
+        <div class="card-head"><div><h2>Risk profile</h2><p class="muted">Pick a starting point — this only changes your thresholds, never your money. You can fine-tune everything below.</p></div></div>
+        <div class="grid grid-3">
+          ${Object.entries(RISK_PRESETS).map(([key, p]) => `
+            <div class="action-card ${currentPreset === key ? 'green' : ''}">
+              <div class="row-between"><b>${escapeHtml(p.label)}</b>${currentPreset === key ? badge('pass', 'Active') : ''}</div>
+              <div class="muted" style="font-size:12.5px;margin:8px 0 10px">${escapeHtml(p.description)}</div>
+              <button class="btn ${currentPreset === key ? 'btn-secondary' : 'btn-primary'} btn-sm" data-preset="${key}">Use this profile</button>
+            </div>`).join('')}
+        </div>
+      </div>
+
+      <div class="grid grid-2 mt">
         <div class="card">
           <h2>Account</h2>
           <p class="muted">Your dedicated "playing" budget. Changing it does not move any money — it only changes the planning maths.</p>
@@ -74,7 +87,9 @@ export default {
           <h3>Data providers</h3>
           <div class="kv"><span>Finnhub (quotes & fundamentals)</span><span>${cfg.providers?.finnhub ? badge('pass', 'Configured') : badge('warn', 'Missing key')}</span></div>
           <div class="kv"><span>CBOE (delayed options + greeks)</span><span>${badge('pass', 'Always on — no key')}</span></div>
-          <div class="kv"><span>Tradier (optional fallback)</span><span>${cfg.providers?.tradier ? badge('pass', 'Configured') : badge('unknown', 'Not configured')}</span></div>
+          <div class="kv"><span>Yahoo (quote / 200-DMA / volume fallback)</span><span>${badge('pass', 'Always on — no key')}</span></div>
+          <div class="kv"><span>MarketData.app (optional, real greeks)</span><span>${cfg.providers?.marketdata ? badge('pass', 'Configured') : badge('unknown', 'No token')}</span></div>
+          <div class="kv"><span>Tradier (optional fallback)</span><span>${cfg.providers?.tradier ? badge('pass', 'Configured') : badge('unknown', 'No key')}</span></div>
           <div class="kv"><span>Supabase auth</span><span>${ctx.auth.configured() ? badge('pass', 'Configured') : badge('warn', 'Not configured')}</span></div>
           <div class="kv"><span>Signed in as</span><span>${escapeHtml(session?.user?.email || 'Not signed in')}</span></div>
           <button class="btn btn-secondary mt" id="testProvider">Test Finnhub connection</button>
@@ -110,6 +125,13 @@ export default {
       </div>`;
   },
   mount(root, ctx) {
+    root.querySelectorAll('[data-preset]').forEach((b) => {
+      b.onclick = () => {
+        ctx.actions.applyPreset(b.dataset.preset);
+        toast(`Applied the "${RISK_PRESETS[b.dataset.preset].label}" profile.`);
+        ctx.reload();
+      };
+    });
     root.querySelector('#saveSettings')?.addEventListener('click', () => {
       const v = readForm(root);
       ctx.actions.updateAccount({ name: v.name, budget: Number(v.budget) || 0, currency: v.currency, fxRate: Number(v.fxRate) || 1 });

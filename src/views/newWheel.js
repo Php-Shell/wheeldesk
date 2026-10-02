@@ -151,13 +151,6 @@ export default {
       const input = root.querySelector('#wTicker');
       if (input) wizard.ticker = input.value.toUpperCase();
       if (!wizard.ticker) { toast('Enter a ticker first.', 'warn'); return; }
-      if (!ctx.auth.get() && ctx.auth.configured()) {
-        toast('Sign in (top-right) to load live data, or continue and enter values manually.', 'warn');
-        wizard.name = wizard.ticker;
-        wizard.loaded = true;
-        ctx.reload();
-        return;
-      }
       wizard.loading = true;
       ctx.reload();
       try {

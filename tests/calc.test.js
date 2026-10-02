@@ -13,8 +13,11 @@ import {
   probabilityOtm,
   wheelState,
   selfTest,
+  presetSettings,
+  RISK_PRESETS,
   DEFAULT_SETTINGS,
 } from '../src/calc.js';
+import { blackScholes } from '../src/greeks.js';
 import { evaluateChecklist, buildChecklistContext, CHECKLIST } from '../src/checklist.js';
 import { toCsv } from '../src/export.js';
 import { money, dte, marketStatus } from '../src/format.js';
@@ -152,6 +155,27 @@ test('market status returns a known shape', () => {
   const s = marketStatus(new Date('2026-10-02T15:00:00Z'));
   assert.ok(['open', 'pre', 'after', 'closed'].includes(s.state));
   assert.match(s.clock, /ET/);
+});
+
+test('black-scholes greeks have the expected signs and magnitudes', () => {
+  const call = blackScholes({ type: 'call', S: 100, K: 100, daysToExpiry: 30, iv: 25 });
+  const put = blackScholes({ type: 'put', S: 100, K: 100, daysToExpiry: 30, iv: 25 });
+  assert.ok(call.delta > 0 && call.delta < 1);
+  assert.ok(put.delta < 0 && put.delta > -1);
+  assert.ok(Math.abs(call.delta - put.delta - 1) < 1e-9);
+  assert.ok(call.gamma > 0);
+  assert.ok(put.theta < 0);
+  assert.ok(call.price > 0 && put.price > 0);
+  assert.equal(blackScholes({ type: 'call', S: 0, K: 100, daysToExpiry: 30, iv: 25 }), null);
+});
+
+test('risk presets override the right settings', () => {
+  const safest = presetSettings('safest');
+  assert.equal(safest.reservePct, 0.2);
+  assert.equal(safest.deltaMax, 0.2);
+  assert.ok(safest.thresholds.openInterest > DEFAULT_SETTINGS.thresholds.openInterest);
+  assert.equal(presetSettings('nope'), null);
+  assert.equal(Object.keys(RISK_PRESETS).length, 3);
 });
 
 test('self-test suite is fully green', () => {

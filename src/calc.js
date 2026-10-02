@@ -51,6 +51,71 @@ export const DEFAULT_SETTINGS = {
   },
 };
 
+// One-click risk profiles. "Safest" trades a little premium for much less
+// chance of assignment; "income" is more aggressive.
+export const RISK_PRESETS = {
+  safest: {
+    label: 'Safest — minimal risk',
+    description: 'Small positions, far-out-of-the-money strikes, bigger cash buffer. Lower premium, fewer assignments.',
+    settings: {
+      reservePct: 0.2,
+      maxPerWheelPct: 0.3,
+      maxWheels: 2,
+      deltaMin: 0.1,
+      deltaMax: 0.2,
+      dteMin: 30,
+      dteMax: 45,
+      takeProfitPct: 0.5,
+      returnMin: 6,
+      returnMax: 20,
+      returnHigh: 35,
+      thresholds: { openInterest: 1000, openInterestWarn: 300, spread: 0.05, spreadPct: 0.07, marketCap: 50_000_000_000, marketCapWarn: 10_000_000_000, volume: 2_000_000, ivMin: 25, ivMax: 55, ivLow: 18, ivHigh: 65 },
+    },
+  },
+  balanced: {
+    label: 'Balanced — recommended',
+    description: 'The sensible default: 30–45 DTE, delta 0.15–0.30, 50% profit target, 10% reserve.',
+    settings: {
+      reservePct: 0.1,
+      maxPerWheelPct: 0.5,
+      maxWheels: 3,
+      deltaMin: 0.15,
+      deltaMax: 0.3,
+      dteMin: 30,
+      dteMax: 45,
+      takeProfitPct: 0.5,
+      returnMin: 10,
+      returnMax: 30,
+      returnHigh: 50,
+      thresholds: { openInterest: 500, openInterestWarn: 100, spread: 0.1, spreadPct: 0.1, marketCap: 10_000_000_000, marketCapWarn: 2_000_000_000, volume: 1_000_000, ivMin: 30, ivMax: 60, ivLow: 20, ivHigh: 70 },
+    },
+  },
+  income: {
+    label: 'Higher income — more risk',
+    description: 'Closer strikes and larger positions for more premium, at the cost of more assignments.',
+    settings: {
+      reservePct: 0.1,
+      maxPerWheelPct: 0.5,
+      maxWheels: 3,
+      deltaMin: 0.2,
+      deltaMax: 0.35,
+      dteMin: 30,
+      dteMax: 45,
+      takeProfitPct: 0.5,
+      returnMin: 15,
+      returnMax: 40,
+      returnHigh: 60,
+      thresholds: { openInterest: 300, openInterestWarn: 100, spread: 0.15, spreadPct: 0.12, marketCap: 5_000_000_000, marketCapWarn: 1_000_000_000, volume: 750_000, ivMin: 30, ivMax: 70, ivLow: 20, ivHigh: 80 },
+    },
+  },
+};
+
+export function presetSettings(name) {
+  const preset = RISK_PRESETS[name];
+  if (!preset) return null;
+  return { ...preset.settings, thresholds: { ...DEFAULT_SETTINGS.thresholds, ...preset.settings.thresholds } };
+}
+
 export function mergeSettings(settings) {
   const s = settings || {};
   return {

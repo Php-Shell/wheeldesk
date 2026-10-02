@@ -35,7 +35,7 @@ function makeContext() {
     providers: { loadTickerData, loadOptions, searchSymbols, testProvider },
     ui,
     format,
-    route,
+    get route() { return route; },
     go: (path) => { location.hash = `#${path.startsWith('/') ? path : `/${path}`}`; },
     toast: ui.toast,
     confirm: ui.confirmDialog,

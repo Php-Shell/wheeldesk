@@ -3,7 +3,7 @@
 // all write actions. The store is tiny and synchronous; UI subscribes to it.
 // ---------------------------------------------------------------------------
 
-import { DEFAULT_SETTINGS, mergeSettings, wheelState, CONTRACT_MULTIPLIER } from './calc.js';
+import { DEFAULT_SETTINGS, mergeSettings, presetSettings, wheelState, CONTRACT_MULTIPLIER } from './calc.js';
 import { toNum, round, isoNow, todayISO } from './format.js';
 
 const KEY = 'wheel-desk-v3';
@@ -207,9 +207,25 @@ export const actions = {
       d.settings = mergeSettings({ ...d.settings, ...patch, thresholds: { ...d.settings.thresholds, ...(patch.thresholds || {}) }, recovery: { ...d.settings.recovery, ...(patch.recovery || {}) } });
     });
   },
+  applyPreset(name) {
+    const preset = presetSettings(name);
+    if (!preset) return state;
+    return mutate((d) => {
+      d.settings = mergeSettings({ ...d.settings, ...preset });
+      d.meta.riskProfile = name;
+    });
+  },
   updateAccount(patch) {
     return mutate((d) => {
       d.account = { ...d.account, ...patch };
+    });
+  },
+  setMarks(marks) {
+    return mutate((d) => {
+      for (const [ticker, price] of Object.entries(marks || {})) {
+        const n = toNum(price, null);
+        if (n !== null) d.marks[ticker] = n;
+      }
     });
   },
   setMark(ticker, price) {
