@@ -2,7 +2,7 @@
 //   pass | warn | fail | unknown
 // "unknown" is used whenever a value could not be verified. We never guess.
 
-import { toNum, round, money, pct } from './format.js';
+import { toNum, round, money, pct, toDMY, parseDMY } from './format.js';
 import { mergeSettings, putMetrics } from './calc.js';
 
 export const CHECKLIST_GROUPS = [
@@ -144,18 +144,18 @@ export const CHECKLIST = [
   item('C14', 'C', 'No earnings before expiration', 'A surprise earnings move can push the put deep in the money.', (c) => {
     const next = c.earnings?.nextDate;
     const expiry = c.option?.expiry;
-    if (!next) return { status: 'unknown', detail: 'Next earnings date unknown — verify before trading.' };
-    if (!expiry) return { status: 'unknown', detail: `Next earnings ${next}. Pick an expiry to compare.` };
+    if (!next) return { status: 'unknown', detail: 'Next earnings date unknown — enter it manually or verify before trading.' };
+    if (!expiry) return { status: 'unknown', detail: `Next earnings ${toDMY(next)}. Pick an expiry to compare.` };
     const nextMs = new Date(next).getTime();
     const expMs = new Date(`${expiry}T23:59:59Z`).getTime();
     if (!Number.isFinite(nextMs) || !Number.isFinite(expMs)) return { status: 'unknown', detail: 'Could not compare earnings and expiry dates.' };
-    return nextMs <= expMs ? { status: 'fail', detail: `Earnings on ${next} is before the ${expiry} expiry.` } : { status: 'pass', detail: `Next earnings ${next} is after the ${expiry} expiry.` };
+    return nextMs <= expMs ? { status: 'fail', detail: `Earnings on ${toDMY(next)} is before the ${toDMY(expiry)} expiry.` } : { status: 'pass', detail: `Next earnings ${toDMY(next)} is after the ${toDMY(expiry)} expiry.` };
   }),
 
   item('C15', 'C', 'Ex-dividend dates noted', 'For a short put this is informational; it matters more for covered calls.', (c) => {
     const d = c.dividends?.next;
     if (!d) return { status: 'unknown', detail: 'No upcoming ex-dividend date found (the company may not pay one) — verify manually.' };
-    return { status: 'pass', detail: `Next ex-dividend ${d.exDate}${d.amount ? ` (${money(d.amount)}/share)` : ''}${d.estimated ? ' — estimated from the last ex-date, verify before relying on it' : ''}.` };
+    return { status: 'pass', detail: `Next ex-dividend ${toDMY(d.exDate)}${d.amount ? ` (${money(d.amount)}/share)` : ''}${d.estimated ? ' — estimated from the last ex-date, verify before relying on it' : ''}.` };
   }),
 
   item('D16', 'D', 'Enough free cash after the reserve', 'Never commit money you may need elsewhere.', (c) => {
@@ -199,6 +199,25 @@ export const ITEM_LINKS = {
   C15: (s) => `https://www.nasdaq.com/market-activity/stocks/${encodeURIComponent(s.toLowerCase())}/dividend-history`,
 };
 
+// Which "Manual / override values" field feeds each checklist item, so the UI
+// can offer a "manual entry" jump for items that are not verified.
+export const ITEM_MANUAL_FIELD = {
+  A1: 'price',
+  A2: 'marketCap',
+  A3: 'epsTTM',
+  A4: 'priceVsMa200',
+  A5: 'avgVolume',
+  A6: 'notMeme',
+  A7: 'happyToOwn',
+  C12: 'ivRank',
+  C14: 'nextEarnings',
+  C15: 'exDividend',
+};
+
+export function manualFieldFor(id) {
+  return ITEM_MANUAL_FIELD[id] || null;
+}
+
 export function itemLink(id, symbol) {
   if (!symbol) return null;
   try {
@@ -225,7 +244,7 @@ export function evaluateChecklist(context) {
     } catch (err) {
       out = { status: 'unknown', detail: 'Could not evaluate with the available data.' };
     }
-    return { ...entry, ...out, link: itemLink(entry.id, context.symbol), meta: STATUS_META[out.status] || STATUS_META.unknown };
+    return { ...entry, ...out, link: itemLink(entry.id, context.symbol), manualField: manualFieldFor(entry.id), meta: STATUS_META[out.status] || STATUS_META.unknown };
   });
   const passCount = results.filter((r) => r.status === 'pass').length;
   const failCount = results.filter((r) => r.status === 'fail').length;
@@ -284,10 +303,10 @@ export function buildChecklistContext({ state, data, option, manual, settings })
   if (has(m.avgVolume)) marketMetrics.avgVolume = toNum(m.avgVolume, marketMetrics.avgVolume);
 
   const earnings = { ...(data?.earnings || {}) };
-  if (has(m.nextEarnings)) earnings.nextDate = m.nextEarnings;
+  if (has(m.nextEarnings)) earnings.nextDate = parseDMY(m.nextEarnings) || m.nextEarnings;
 
   const dividends = { ...(data?.dividends || {}) };
-  if (has(m.exDividend)) dividends.next = { exDate: m.exDividend, amount: has(m.dividendAmount) ? toNum(m.dividendAmount, null) : dividends.next?.amount ?? null, estimated: false };
+  if (has(m.exDividend)) dividends.next = { exDate: parseDMY(m.exDividend) || m.exDividend, amount: has(m.dividendAmount) ? toNum(m.dividendAmount, null) : dividends.next?.amount ?? null, estimated: false };
 
   const priceVsMa200 = has(m.priceVsMa200) ? toNum(m.priceVsMa200, null) : (data?.priceVsMa200 ?? null);
 

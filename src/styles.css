@@ -268,6 +268,19 @@ textarea { resize: vertical; min-height: 90px; }
 .checkline { display: flex; gap: 9px; align-items: flex-start; font-size: 13.5px; }
 .checkline input { width: auto; margin-top: 3px; }
 
+/* Highlight applied when a checklist "manual entry" button jumps to a field. */
+.field.flash {
+  border-radius: var(--radius-sm);
+  outline: 3px solid var(--blue);
+  outline-offset: 4px;
+  background: var(--blue-soft);
+  animation: flash-pulse 1.2s ease-in-out infinite;
+}
+@keyframes flash-pulse {
+  0%, 100% { outline-color: rgba(59, 111, 224, 0.9); }
+  50% { outline-color: rgba(59, 111, 224, 0.3); }
+}
+
 /* --------------------------------------------------------------------------
    Accordion
    -------------------------------------------------------------------------- */

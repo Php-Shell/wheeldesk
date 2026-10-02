@@ -1,6 +1,6 @@
 import { buildChecklistContext, evaluateChecklist, CHECKLIST_GROUPS, STATUS_META } from '../checklist.js';
 import { mergeSettings, putMetrics, DEFAULT_SETTINGS } from '../calc.js';
-import { money, pct, escapeHtml, dte, fmtInZone, localTimeZone } from '../format.js';
+import { money, pct, escapeHtml, dte, fmtInZone, localTimeZone, toDMY, parseDMY } from '../format.js';
 import { badge, tip, toast, chartColors } from '../ui.js';
 
 const openSet = new Set();
@@ -224,9 +224,55 @@ function sparklineSvg(closes, ma200) {
   </svg>`;
 }
 
-function manualField(sym, key, label, url, draft, placeholder = '') {
-  return `<div class="field"><label>${escapeHtml(label)} <a href="${url}" target="_blank" rel="noopener" style="font-weight:600;text-transform:none;letter-spacing:0">find ↗</a></label>
+function manualField(sym, key, label, code, url, draft, placeholder = '') {
+  return `<div class="field" data-field-key="${key}"><label>${escapeHtml(label)} <span class="pill" style="font-size:10px">${escapeHtml(code)}</span> <a href="${url}" target="_blank" rel="noopener" style="font-weight:600;text-transform:none;letter-spacing:0">find ↗</a></label>
     <input data-manual="${sym}" data-k="${key}" value="${escapeHtml(draft[key] ?? '')}" placeholder="${escapeHtml(placeholder)}" /></div>`;
+}
+
+const MANUAL_KEYS = ['happyToOwn', 'notMeme', 'trendOverride', 'ivRank', 'price', 'marketCap', 'epsTTM', 'avgVolume', 'priceVsMa200', 'nextEarnings', 'exDividend', 'dividendAmount'];
+
+function manualSnapshot(draft) {
+  const out = {};
+  for (const k of MANUAL_KEYS) out[k] = draft[k];
+  return out;
+}
+
+let saveTimer = null;
+function scheduleSave(sym, ctx) {
+  clearTimeout(saveTimer);
+  saveTimer = setTimeout(() => {
+    const d = drafts.get(sym);
+    if (!d) return;
+    ctx.actions.updateWatchQuiet(sym, { manual: manualSnapshot(d), candidates: d.candidates, activeCandidate: d.active, option: { expiry: d.expiry } });
+  }, 600);
+}
+
+// Scroll to the matching manual field, highlight it, and focus it.
+function focusManualField(sym, key, root) {
+  const el = root.querySelector(`[data-manual="${sym}"][data-k="${key}"]`);
+  if (!el) return;
+  const field = el.closest('.field');
+  el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  field?.classList.add('flash');
+  setTimeout(() => el.focus({ preventScroll: true }), 250);
+  const clear = () => field?.classList.remove('flash');
+  el.addEventListener('input', () => setTimeout(clear, 500), { once: true });
+  setTimeout(clear, 8000);
+}
+
+function openWheelFromSetup(sym, ctx) {
+  const draft = drafts.get(sym);
+  const w = ctx.state.watchlist.find((x) => x.symbol === sym);
+  const opt = activeOption(w, draft);
+  const p = new URLSearchParams({ symbol: sym });
+  if (opt) {
+    p.set('strike', opt.strike);
+    if (opt.expiry) p.set('expiry', opt.expiry);
+    if (opt.mid) p.set('premium', opt.mid);
+    if (opt.delta) p.set('delta', opt.delta);
+    if (opt.openInterest) p.set('oi', opt.openInterest);
+  }
+  ctx.go(`/new?${p.toString()}`);
 }
 
 function dataLinks(sym) {
@@ -273,7 +319,8 @@ function checklistHtml(w, ctx) {
         <div class="check-item ${i.status}">
           <span class="check-ico" title="${escapeHtml(i.meta.label)}">${i.meta.icon}</span>
           <div><div class="check-label">${i.id} · ${tip(escapeHtml(i.label), i.why)}</div>
-          <div class="check-detail">${escapeHtml(i.detail || i.meta.label)}${i.link ? ` <a href="${i.link}" target="_blank" rel="noopener" style="font-weight:600;white-space:nowrap">find ↗</a>` : ''}</div></div>
+          <div class="check-detail">${escapeHtml(i.detail || i.meta.label)}${i.link ? ` <a href="${i.link}" target="_blank" rel="noopener" style="font-weight:600;white-space:nowrap">find ↗</a>` : ''}</div>
+          ${i.manualField && i.status !== 'pass' ? `<button class="btn btn-ghost btn-sm" data-manual-entry="${i.manualField}" data-sym="${w.symbol}" style="padding:2px 8px;margin-top:4px">✎ manual entry ↓</button>` : ''}</div>
           <span class="badge ${i.status}">${escapeHtml(i.meta.label)}</span>
         </div>`).join('')}</div>`;
   }).join('');
@@ -345,8 +392,8 @@ function watchBody(w, ctx) {
       <div class="kv"><span>Avg volume</span><span>${eff('avgVolume', data?.metrics?.avgVolume) != null ? `${(Number(eff('avgVolume', data?.metrics?.avgVolume)) / 1e6).toFixed(2)}M` : '—'}</span></div>
       <div class="kv"><span>52-week range</span><span>${data?.metrics?.low52 != null && data?.metrics?.high52 != null ? `${money(data.metrics.low52)} – ${money(data.metrics.high52)}` : '—'}</span></div>
       <div class="kv"><span>Price vs 200-DMA</span><span>${vsMa != null ? `${Number(vsMa) >= 0 ? '+' : ''}${Number(vsMa).toFixed(1)}%` : '—'}</span></div>
-      <div class="kv"><span>Next earnings</span><span>${eff('nextEarnings', data?.earnings?.nextDate) ? `${escapeHtml(String(eff('nextEarnings', data?.earnings?.nextDate)))}${data?.earnings?.daysUntil != null && draft.nextEarnings === '' ? ` (in ${data.earnings.daysUntil}d)` : ''}` : '—'}</span></div>
-      <div class="kv"><span>Next ex-dividend</span><span>${divEx ? `${escapeHtml(String(divEx))}${divAmt ? ` · ${money(divAmt)}` : ''}${divEst ? ' (est.)' : ''}` : '—'}</span></div>
+      <div class="kv"><span>Next earnings</span><span>${eff('nextEarnings', data?.earnings?.nextDate) ? `${toDMY(eff('nextEarnings', data?.earnings?.nextDate))}${data?.earnings?.daysUntil != null && draft.nextEarnings === '' ? ` (in ${data.earnings.daysUntil}d)` : ''}` : '—'}</span></div>
+      <div class="kv"><span>Next ex-dividend</span><span>${divEx ? `${toDMY(divEx)}${divAmt ? ` · ${money(divAmt)}` : ''}${divEst ? ' (est.)' : ''}` : '—'}</span></div>
       <div class="kv"><span>Industry</span><span>${escapeHtml(data?.profile?.industry || '—')}</span></div>
     </div>
     <div class="source-line">${sourceLine}</div>
@@ -358,33 +405,33 @@ function watchBody(w, ctx) {
     ${closes?.length ? `${sparklineSvg(closes, ma200)}<p class="muted" style="font-size:12px;margin:6px 0 0">${ma200 ? `${Number(eff('price', data?.quote?.price)) >= ma200 ? 'Above' : 'Below'} the 200-day average — item A4 is judged from this.` : 'Last ~120 daily closes.'}</p>`
       : `<div class="notice info" style="margin:0">Historical prices were unavailable from the free sources. <a href="${links.chart}" target="_blank" rel="noopener">Open the chart ↗</a> to check the trend, then enter the % vs 200-DMA below or write an override reason.</div>`}
 
-    <div class="card-head" style="margin-top:18px"><h4>Manual / override values</h4><span class="muted" style="font-size:12px">Optional. Manual values override fetched data and feed the checklist.</span></div>
+    <div class="card-head" style="margin-top:18px"><h4>Manual / override values</h4><span class="muted" style="font-size:12px">Optional. Manual values override fetched data, feed the checklist, and auto-save as you type. Codes match the checklist items.</span></div>
     <div class="grid grid-3">
-      ${manualField(w.symbol, 'price', 'Price', links.quote, draft, '61.20')}
-      ${manualField(w.symbol, 'marketCap', 'Market cap ($)', links.stats, draft, '260000000000')}
-      ${manualField(w.symbol, 'epsTTM', 'Trailing EPS', links.stats, draft, '2.40')}
-      ${manualField(w.symbol, 'avgVolume', 'Average daily volume', links.stats, draft, '14000000')}
-      ${manualField(w.symbol, 'priceVsMa200', 'Price vs 200-DMA (%)', links.chart, draft, '+3.5 or -6')}
-      ${manualField(w.symbol, 'ivRank', 'IV Rank (0–100)', links.options, draft, '45')}
-      ${manualField(w.symbol, 'nextEarnings', 'Next earnings date', links.earnings, draft, 'YYYY-MM-DD')}
-      ${manualField(w.symbol, 'exDividend', 'Next ex-dividend date', links.dividends, draft, 'YYYY-MM-DD')}
-      ${manualField(w.symbol, 'dividendAmount', 'Dividend per share ($)', links.dividends, draft, '0.27')}
+      ${manualField(w.symbol, 'price', 'Price', 'A1', links.quote, draft, '61.20')}
+      ${manualField(w.symbol, 'marketCap', 'Market cap ($)', 'A2', links.stats, draft, '260000000000')}
+      ${manualField(w.symbol, 'epsTTM', 'Trailing EPS', 'A3', links.stats, draft, '2.40')}
+      ${manualField(w.symbol, 'priceVsMa200', 'Price vs 200-DMA (%)', 'A4', links.chart, draft, '+3.5 or -6')}
+      ${manualField(w.symbol, 'avgVolume', 'Average daily volume', 'A5', links.stats, draft, '14000000')}
+      ${manualField(w.symbol, 'ivRank', 'IV Rank (0–100)', 'C12', links.options, draft, '45')}
+      ${manualField(w.symbol, 'nextEarnings', 'Next earnings date', 'C14', links.earnings, draft, 'DD/MM/YYYY')}
+      ${manualField(w.symbol, 'exDividend', 'Next ex-dividend date', 'C15', links.dividends, draft, 'DD/MM/YYYY')}
+      ${manualField(w.symbol, 'dividendAmount', 'Dividend per share ($)', 'C15', links.dividends, draft, '0.27')}
     </div>
 
     <div class="grid grid-3 mt">
-      <div class="field"><label>Would you happily own 100 shares at this price?</label>
+      <div class="field" data-field-key="happyToOwn"><label>Would you happily own 100 shares at this price? <span class="pill" style="font-size:10px">A7</span></label>
         <select data-manual="${w.symbol}" data-k="happyToOwn">
           <option value="">Choose…</option>
           <option value="yes" ${draft.happyToOwn === 'yes' ? 'selected' : ''}>Yes, I'd own it for months</option>
           <option value="no" ${draft.happyToOwn === 'no' ? 'selected' : ''}>No</option>
         </select></div>
-      <div class="field"><label>Confirmed not a meme / IPO / binary biotech / leveraged ETF?</label>
+      <div class="field" data-field-key="notMeme"><label>Confirmed not a meme / IPO / binary biotech / leveraged ETF? <span class="pill" style="font-size:10px">A6</span></label>
         <select data-manual="${w.symbol}" data-k="notMeme">
           <option value="">Choose…</option>
           <option value="yes" ${draft.notMeme === 'yes' ? 'selected' : ''}>Confirmed normal company/ETF</option>
           <option value="no" ${draft.notMeme === 'no' ? 'selected' : ''}>It is one of those</option>
         </select></div>
-      <div class="field"><label>200-DMA override <span class="hint">(only if the chart data is missing)</span></label>
+      <div class="field" data-field-key="trendOverride"><label>200-DMA override <span class="pill" style="font-size:10px">A4</span> <span class="hint">(only if the chart data is missing)</span></label>
         <input data-manual="${w.symbol}" data-k="trendOverride" value="${escapeHtml(draft.trendOverride)}" placeholder="e.g. long-term uptrend intact" /></div>
     </div>
 
@@ -517,14 +564,6 @@ export default {
       };
     });
 
-    root.querySelectorAll('[data-refresh]').forEach((b) => {
-      b.onclick = async () => {
-        requested.delete(b.dataset.refresh);
-        await loadData(b.dataset.refresh, ctx);
-        ctx.reload();
-      };
-    });
-
     root.querySelectorAll('[data-signin]').forEach((b) => { b.onclick = () => ctx.openAccount(); });
 
     root.querySelectorAll('[data-fetch-chain]').forEach((b) => {
@@ -545,22 +584,27 @@ export default {
       if (host && w) host.innerHTML = checklistHtml(w, ctx);
     };
     root.querySelectorAll('[data-manual],[data-expiry]').forEach((el) => {
-      el.onchange = () => {
+      const handle = () => {
         const sym = el.dataset.manual || el.dataset.expiry;
         const draft = drafts.get(sym);
         if (!draft) return;
         if (el.dataset.expiry) draft.expiry = el.value;
         else draft[el.dataset.k] = el.value;
         recalc(sym);
+        scheduleSave(sym, ctx);
       };
+      el.oninput = handle;
+      el.onchange = handle;
     });
     root.querySelectorAll('[data-cand]').forEach((el) => {
       el.oninput = () => {
         const draft = drafts.get(el.dataset.cand);
         if (!draft) return;
         draft.candidates[Number(el.dataset.i)][el.dataset.k] = el.value;
+        recalc(el.dataset.cand);
+        scheduleSave(el.dataset.cand, ctx);
       };
-      el.onchange = () => recalc(el.dataset.cand);
+      el.onchange = () => { recalc(el.dataset.cand); scheduleSave(el.dataset.cand, ctx); };
     });
     root.querySelectorAll('[data-use]').forEach((b) => {
       b.onclick = () => {
@@ -602,22 +646,15 @@ export default {
         }
       };
     });
-    root.querySelectorAll('[data-open-wheel]').forEach((b) => {
-      b.onclick = () => {
-        const sym = b.dataset.openWheel;
-        const draft = drafts.get(sym);
-        const opt = activeOption(ctx.state.watchlist.find((x) => x.symbol === sym), draft);
-        const p = new URLSearchParams({ symbol: sym });
-        if (opt) {
-          p.set('strike', opt.strike);
-          if (opt.expiry) p.set('expiry', opt.expiry);
-          if (opt.mid) p.set('premium', opt.mid);
-          if (opt.delta) p.set('delta', opt.delta);
-          if (opt.openInterest) p.set('oi', opt.openInterest);
-        }
-        ctx.go(`/new?${p.toString()}`);
-      };
-    });
+    // Delegated so it keeps working after the checklist is re-rendered in place.
+    root.onclick = (e) => {
+      const me = e.target.closest('[data-manual-entry]');
+      if (me) { e.preventDefault(); focusManualField(me.dataset.sym, me.dataset.manualEntry, root); return; }
+      const r = e.target.closest('[data-refresh]');
+      if (r) { requested.delete(r.dataset.refresh); loadData(r.dataset.refresh, ctx).then(() => ctx.reload()); return; }
+      const o = e.target.closest('[data-open-wheel]');
+      if (o) { openWheelFromSetup(o.dataset.openWheel, ctx); }
+    };
 
     // Auto-load any open ticker that has no data yet.
     if (openSet.size) loadAll(ctx);

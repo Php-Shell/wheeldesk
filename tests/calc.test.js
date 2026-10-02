@@ -18,9 +18,9 @@ import {
   DEFAULT_SETTINGS,
 } from '../src/calc.js';
 import { blackScholes } from '../src/greeks.js';
-import { evaluateChecklist, buildChecklistContext, CHECKLIST, itemLink } from '../src/checklist.js';
+import { evaluateChecklist, buildChecklistContext, CHECKLIST, itemLink, manualFieldFor } from '../src/checklist.js';
 import { toCsv } from '../src/export.js';
-import { money, dte, marketStatus } from '../src/format.js';
+import { money, dte, marketStatus, toDMY, parseDMY } from '../src/format.js';
 
 test('put metrics match the documented example', () => {
   const m = putMetrics({ strike: 50, mid: 1.2, contracts: 1, commission: 0.65, daysToExpiry: 30, stockPrice: 52, delta: -0.22 });
@@ -171,6 +171,21 @@ test('manual values override missing fetched data in the checklist', () => {
   assert.notEqual(byId.A5, 'unknown');
   assert.notEqual(byId.C14, 'unknown');
   assert.notEqual(byId.C15, 'unknown');
+});
+
+test('dates display as DD/MM/YYYY and parse back to ISO', () => {
+  assert.equal(toDMY('2026-11-09'), '09/11/2026');
+  assert.equal(toDMY('09/11/2026'), '09/11/2026');
+  assert.equal(parseDMY('09/11/2026'), '2026-11-09');
+  assert.equal(parseDMY('2026-11-09'), '2026-11-09');
+  assert.equal(parseDMY('not a date'), null);
+});
+
+test('checklist items map to a manual override field', () => {
+  assert.equal(manualFieldFor('C15'), 'exDividend');
+  assert.equal(manualFieldFor('C14'), 'nextEarnings');
+  assert.equal(manualFieldFor('A7'), 'happyToOwn');
+  assert.equal(manualFieldFor('B9'), null);
 });
 
 test('checklist items expose external verification links', () => {

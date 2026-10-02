@@ -94,13 +94,37 @@ export function fmtInZone(iso, timeZone, opts = {}) {
   return new Intl.DateTimeFormat('en-GB', {
     timeZone,
     year: 'numeric',
-    month: 'short',
+    month: '2-digit',
     day: '2-digit',
     hour: '2-digit',
     minute: '2-digit',
     hour12: false,
     ...opts,
   }).format(date);
+}
+
+// Dates are shown as DD/MM/YYYY throughout the app.
+export function toDMY(iso) {
+  if (!iso) return '';
+  const s = String(iso).trim();
+  const dmy = /^(\d{1,2})\/(\d{1,2})\/(\d{4})$/.exec(s);
+  if (dmy) return `${dmy[1].padStart(2, '0')}/${dmy[2].padStart(2, '0')}/${dmy[3]}`;
+  const d = new Date(s);
+  if (!Number.isFinite(d.getTime())) return s;
+  const dd = String(d.getUTCDate()).padStart(2, '0');
+  const mm = String(d.getUTCMonth() + 1).padStart(2, '0');
+  return `${dd}/${mm}/${d.getUTCFullYear()}`;
+}
+
+// Accepts DD/MM/YYYY (preferred) or YYYY-MM-DD and returns an ISO YYYY-MM-DD.
+export function parseDMY(str) {
+  const s = String(str || '').trim();
+  if (!s) return null;
+  let m = /^(\d{1,2})\/(\d{1,2})\/(\d{4})$/.exec(s);
+  if (m) return `${m[3]}-${m[2].padStart(2, '0')}-${m[1].padStart(2, '0')}`;
+  m = /^(\d{4})-(\d{1,2})-(\d{1,2})$/.exec(s);
+  if (m) return `${m[1]}-${m[2].padStart(2, '0')}-${m[3].padStart(2, '0')}`;
+  return null;
 }
 
 export function localTimeZone() {

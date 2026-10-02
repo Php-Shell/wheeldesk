@@ -64,10 +64,10 @@ export function subscribe(fn) {
   return () => listeners.delete(fn);
 }
 
-function mutate(fn) {
+function mutate(fn, { silent = false } = {}) {
   const draft = structuredClone(state);
   fn(draft);
-  return saveState(draft);
+  return saveState(draft, { silent });
 }
 
 function record(draft, type, detail = {}) {
@@ -252,6 +252,13 @@ export const actions = {
     return mutate((d) => {
       d.watchlist = d.watchlist.map((w) => (w.symbol === symbol ? { ...w, ...patch } : w));
     });
+  },
+  // Saves without notifying subscribers, so the screener can auto-save a field
+  // while the user types without losing focus to a full re-render.
+  updateWatchQuiet(symbol, patch) {
+    return mutate((d) => {
+      d.watchlist = d.watchlist.map((w) => (w.symbol === symbol ? { ...w, ...patch } : w));
+    }, { silent: true });
   },
   openWheel({ ticker, sector = '', mode = 'paper', plan = {}, thesis = '' }) {
     const id = uid();
