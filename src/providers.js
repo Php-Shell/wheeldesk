@@ -167,6 +167,12 @@ export async function loadOptions(symbol, expiry, token) {
   return cached(key, () => call('options', { symbol: s, expiry }, token));
 }
 
+export async function loadDividends(symbol, token) {
+  const s = String(symbol || '').toUpperCase();
+  if (!s) return null;
+  return cached(`dividends:${s}`, () => call('dividends', { symbol: s }, token));
+}
+
 export async function searchSymbols(query, token) {
   const q = String(query || '').trim();
   if (q.length < 1) return [];

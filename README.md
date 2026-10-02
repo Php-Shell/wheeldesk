@@ -12,7 +12,11 @@ A beginner-friendly dashboard for running the **cash-secured put + wheel** strat
 | --- | --- |
 | **Dashboard** | Budget, available cash, collateral, premiums, realized/unrealized P&L, return %, win rate, "Today's actions", and 4 charts (net worth, premium income, P&L by ticker, allocation). |
 | **Screener** | **Auto-scan & rank**: loads live fundamentals + free option chains for your watchlist or a set of safe ideas, scores each against the checklist, and ranks the best puts. Also lets you inspect any ticker manually. |
-| **Risk profiles** | One-click Safest / Balanced / Higher-income presets that set every threshold for you, with plain-English explanations. |
+| **Risk profiles** | One-click Safest (20% per stock) / Balanced (33%) / Higher-income (50%) presets that set every threshold for you, with plain-English explanations. |
+| **Rule book (floating)** | A bottom-right **Rules** button opens the beginner's rule book anywhere in the app, with tickable checkboxes and **Clear all**. On Chrome/Edge you can **Float** it into a Picture-in-Picture window so it stays on top while you switch to IBKR. |
+| **Two-step wheel loop** | Step 1 = sell a cash-secured put; assignment is **not a failure**, it's the signal to Step 2 = sell covered calls. A dedicated **covered-call wizard** (with chain recommendations and a cost-basis guard) launches from the wheel. |
+| **50% profit tracking** | The app tracks the current value of your open option (auto from the chain, or manual) and shows **premium captured %**, prompting you to close at the ~50% target. |
+| **Rolling recovery** | A losing short put opens a **rolling-first** recovery view: buy back and sell further out / lower, chain-driven suggestions, **net-credit** checks, and an "accept assignment" alternative. |
 | **New wheel wizard** | 5 guided steps: ticker → strike & expiry → honest review of the numbers → exact IBKR click path → log the real fill. |
 | **Wheels** | Event-sourced ledger with a visual state machine (short put → holding → short call → complete), a dated timeline, running cost basis, and one-click actions (buy to close, roll, assigned, sell call, called away, dividend, sell shares, close). |
 | **Recovery assistant** | If you're stuck holding shares: computes your adjusted cost basis, classifies A/B/C/D, compares covered-call candidates and recovery time, and gives plain-English exit instructions. |

@@ -10,6 +10,7 @@ import * as format from './format.js';
 import { views, DEFAULT_VIEW } from './views/index.js';
 import { marketStatus, fmtInZone, localTimeZone, downloadText, escapeHtml } from './format.js';
 import { buildBackup, parseBackup } from './export.js';
+import { mountRulebook } from './rulebook.js';
 
 let globalConfig = { providers: {} };
 let route = { name: DEFAULT_VIEW, params: {} };
@@ -197,6 +198,8 @@ async function boot() {
   await auth.restore().catch(() => null);
   ctx = makeContext();
   wireControls();
+  mountRulebook();
+  window.addEventListener('wheel-toast', (e) => ui.toast(e.detail.message, e.detail.type));
   subscribe(() => render());
   if (!location.hash) location.hash = `#/${DEFAULT_VIEW}`;
   render();

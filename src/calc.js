@@ -11,7 +11,7 @@ export const CONTRACT_MULTIPLIER = 100;
 export const DEFAULT_SETTINGS = {
   budget: 10000,
   reservePct: 0.1,
-  maxPerWheelPct: 0.5,
+  maxPerWheelPct: 0.33,
   maxWheels: 3,
   commission: 0.65,
   assignmentFee: 0,
@@ -61,9 +61,9 @@ export const RISK_PRESETS = {
     description: 'Small positions, far-out-of-the-money strikes, bigger cash buffer. Lower premium, fewer assignments.',
     settings: {
       reservePct: 0.2,
-      maxPerWheelPct: 0.3,
+      maxPerWheelPct: 0.2,
       maxWheels: 2,
-      deltaMin: 0.1,
+      deltaMin: 0.15,
       deltaMax: 0.2,
       dteMin: 30,
       dteMax: 45,
@@ -76,10 +76,10 @@ export const RISK_PRESETS = {
   },
   balanced: {
     label: 'Balanced — recommended',
-    description: 'The sensible default: 30–45 DTE, delta 0.15–0.30, 50% profit target, 10% reserve.',
+    description: 'The sensible default: 30–45 DTE, delta 0.15–0.30, 50% profit target, 10% reserve, max 33% per stock.',
     settings: {
       reservePct: 0.1,
-      maxPerWheelPct: 0.5,
+      maxPerWheelPct: 0.33,
       maxWheels: 3,
       deltaMin: 0.15,
       deltaMax: 0.3,
@@ -94,13 +94,13 @@ export const RISK_PRESETS = {
   },
   income: {
     label: 'Higher income — more risk',
-    description: 'Closer strikes and larger positions for more premium, at the cost of more assignments.',
+    description: 'Closer strikes (delta 0.20–0.30) and up to 50% of budget per stock for more premium, at the cost of more assignments.',
     settings: {
       reservePct: 0.1,
       maxPerWheelPct: 0.5,
       maxWheels: 3,
       deltaMin: 0.2,
-      deltaMax: 0.35,
+      deltaMax: 0.3,
       dteMin: 30,
       dteMax: 45,
       takeProfitPct: 0.5,
@@ -267,6 +267,26 @@ export function adjustedCostBasis({ assignmentPrice, premiums = 0, fees = 0, div
   return price - perShare;
 }
 
+// How much of the premium you've captured on an open short option.
+// captured% = (entry credit − cost to close now) / entry credit.
+export function capturedPct({ entryMid, currentMid, contracts = 1, commission = DEFAULT_SETTINGS.commission } = {}) {
+  const e = toNum(entryMid, null);
+  const c = toNum(currentMid, null);
+  if (e === null || c === null || e <= 0) return null;
+  const q = Math.max(1, Math.floor(toNum(contracts, 1)));
+  const entryNet = e * CONTRACT_MULTIPLIER * q - contractFees(q, commission);
+  const currentCost = c * CONTRACT_MULTIPLIER * q + contractFees(q, commission);
+  if (entryNet <= 0) return null;
+  return clamp((entryNet - currentCost) / entryNet, -5, 1) * 100;
+}
+
+// Find the exact contract in a normalized chain (rows: {type,strike,expiry,...}).
+export function findContract(rows, { type, strike, expiry } = {}) {
+  if (!Array.isArray(rows)) return null;
+  const k = toNum(strike, null);
+  return rows.find((r) => r.type === type && (!expiry || r.expiry === expiry) && (k === null || Math.abs(Number(r.strike) - k) < 1e-6)) || null;
+}
+
 export function rollMetrics({ contracts = 1, buyBackPrice = 0, sellPrice = 0, commission = DEFAULT_SETTINGS.commission } = {}) {
   const q = Math.max(1, Math.floor(toNum(contracts, 1)));
   const buy = toNum(buyBackPrice, 0);
@@ -398,6 +418,8 @@ export function wheelState(wheel, trades = [], dividends = []) {
   let putExpiry = null;
   let callStrike = null;
   let callExpiry = null;
+  let rolls = 0;
+  let lastEntry = null;
 
   for (const t of sorted) {
     const q = toNum(t.contracts, 0);
@@ -410,9 +432,10 @@ export function wheelState(wheel, trades = [], dividends = []) {
       premiums += px * CONTRACT_MULTIPLIER * q - fee;
       putStrike = toNum(t.strike, putStrike);
       putExpiry = t.expiry || putExpiry;
+      lastEntry = { type: 'put', mid: px, strike: putStrike, expiry: putExpiry, contracts: q };
     } else if (action === 'BUY_PUT_CLOSE') {
       openPut = Math.max(0, openPut - q);
-      realized += (putStrike !== null ? 0 : 0);
+      rolls += 1;
       premiums -= px * CONTRACT_MULTIPLIER * q + fee;
     } else if (action === 'PUT_EXPIRE') {
       openPut = Math.max(0, openPut - q);
@@ -426,8 +449,10 @@ export function wheelState(wheel, trades = [], dividends = []) {
       premiums += px * CONTRACT_MULTIPLIER * q - fee;
       callStrike = toNum(t.strike, callStrike);
       callExpiry = t.expiry || callExpiry;
+      lastEntry = { type: 'call', mid: px, strike: callStrike, expiry: callExpiry, contracts: q };
     } else if (action === 'BUY_CALL_CLOSE') {
       openCall = Math.max(0, openCall - q);
+      rolls += 1;
       premiums -= px * CONTRACT_MULTIPLIER * q + fee;
     } else if (action === 'CALL_EXPIRE') {
       openCall = Math.max(0, openCall - q);
@@ -472,6 +497,8 @@ export function wheelState(wheel, trades = [], dividends = []) {
     callExpiry,
     currentExpiry,
     daysToExpiry,
+    rolls,
+    lastEntry,
     collateral: openPut > 0 ? round((putStrike || 0) * CONTRACT_MULTIPLIER * openPut, 2) : 0,
   };
 }

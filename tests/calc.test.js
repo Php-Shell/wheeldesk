@@ -16,6 +16,8 @@ import {
   presetSettings,
   RISK_PRESETS,
   DEFAULT_SETTINGS,
+  capturedPct,
+  findContract,
 } from '../src/calc.js';
 import { blackScholes } from '../src/greeks.js';
 import { evaluateChecklist, buildChecklistContext, CHECKLIST, itemLink, manualFieldFor } from '../src/checklist.js';
@@ -196,6 +198,35 @@ test('C15 resolves dividend status instead of staying unverified', () => {
   assert.equal(c15(mk({ next: null }, { dividendYield: 0 })), 'pass');       // no dividend
   assert.equal(c15(mk({ next: null }, { dividendYield: 6.8 })), 'warn');     // pays, date unknown
   assert.equal(c15(mk({ next: { exDate: '2026-11-09', estimated: true } }, { dividendYield: 6.8 })), 'pass');
+});
+
+test('captured % follows the 50%-profit rule', () => {
+  assert.equal(Math.round(capturedPct({ entryMid: 1, currentMid: 0.4, contracts: 1, commission: 0 })), 60);
+  assert.ok(capturedPct({ entryMid: 1, currentMid: 0.4, contracts: 1, commission: 0.65 }) > 55);
+  assert.equal(capturedPct({ entryMid: 0, currentMid: 0.4 }), null);
+});
+
+test('findContract matches type/strike/expiry', () => {
+  const rows = [
+    { type: 'put', strike: 45, expiry: '2026-12-18', mid: 0.5 },
+    { type: 'call', strike: 45, expiry: '2026-12-18', mid: 0.6 },
+  ];
+  assert.equal(findContract(rows, { type: 'put', strike: 45, expiry: '2026-12-18' }).mid, 0.5);
+  assert.equal(findContract(rows, { type: 'call', strike: 45 }).mid, 0.6);
+  assert.equal(findContract(rows, { type: 'put', strike: 99 }), null);
+});
+
+test('wheelState counts rolls/closes and tracks the last entry leg', () => {
+  const trades = [
+    { action: 'SELL_PUT_OPEN', contracts: 1, price: 1, fees: 0.65, strike: 45, expiry: '2026-11-20', executedAt: '2026-10-01' },
+    { action: 'BUY_PUT_CLOSE', contracts: 1, price: 0.4, fees: 0.65, strike: 45, expiry: '2026-11-20', executedAt: '2026-10-20' },
+    { action: 'SELL_PUT_OPEN', contracts: 1, price: 0.8, fees: 0.65, strike: 44, expiry: '2026-12-18', executedAt: '2026-10-20' },
+  ];
+  const st = wheelState({}, trades);
+  assert.equal(st.rolls, 1);
+  assert.equal(st.lastEntry.type, 'put');
+  assert.equal(st.lastEntry.strike, 44);
+  assert.equal(st.state, 'short_put');
 });
 
 test('dates display as DD/MM/YYYY and parse back to ISO', () => {

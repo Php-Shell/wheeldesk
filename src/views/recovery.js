@@ -1,6 +1,6 @@
 import { wheelSummary, deriveAccount } from '../store.js';
 import { recoveryScenario, callCandidateAnalysis, adjustedCostBasis, mergeSettings } from '../calc.js';
-import { money, pct, escapeHtml, dte, todayISO, addDays } from '../format.js';
+import { money, pct, escapeHtml, dte, todayISO, addDays, toDMY } from '../format.js';
 import { badge, tip, field, toast, openModal, readForm } from '../ui.js';
 
 let state = null;
@@ -24,6 +24,45 @@ function loadFor(wheelId, ctx) {
     waitMonths: w.recoveryPlan?.waitMonths || 3,
     candidates,
   };
+}
+
+function renderPutRoll(ctx, w, sm, st) {
+  const itm = sm.mark != null && sm.putStrike != null && sm.mark < sm.putStrike;
+  const rolled = sm.rolls >= 3;
+  return `
+    <div class="stepper">
+      <span class="step active"><span class="step-num">1</span>Short put</span>
+      <span class="step"><span class="step-num">2</span>Roll for a credit</span>
+      <span class="step"><span class="step-num">3</span>Or accept assignment</span>
+      <span class="step"><span class="step-num">4</span>Log it</span>
+    </div>
+    <div class="card">
+      <div class="card-head"><div><h2>${tip('Put recovery — roll or accept assignment', 'Rolling = buy back the put and sell a new one further out (and often lower) for a net credit. It buys time and can lower your buy price.')}</h2>
+        <p class="muted">If the stock moves against you before expiry, rolling is usually better than panic-buying it back at a loss.</p></div>
+        <select id="recWheel" class="input-sm" style="max-width:220px">${ctx.state.wheels.map((x) => `<option value="${x.id}" ${x.id === w.id ? 'selected' : ''}>${escapeHtml(x.ticker)} · ${escapeHtml(x.state)}</option>`).join('')}</select>
+      </div>
+      <div class="grid grid-3">
+        <div class="kv"><span>Put strike</span><span>${sm.putStrike != null ? money(sm.putStrike) : '—'}</span></div>
+        <div class="kv"><span>Expiry</span><span>${sm.putExpiry ? toDMY(sm.putExpiry) : '—'}${sm.dte != null ? ` (${sm.dte} DTE)` : ''}</span></div>
+        <div class="kv"><span>Stock now</span><span>${sm.mark != null ? money(sm.mark) : '—'}</span></div>
+        <div class="kv"><span>Sold at (mid)</span><span>${sm.leg ? money(sm.leg.mid) : '—'}</span></div>
+        <div class="kv"><span>Option now</span><span>${sm.legMid != null ? money(sm.legMid) : '—'}</span></div>
+        <div class="kv"><span>Captured</span><span class="${sm.captured != null && sm.captured >= sm.target ? 'positive' : ''}">${sm.captured != null ? `${sm.captured.toFixed(0)}%` : '—'} <span class="muted">(target ${sm.target}%)</span></span></div>
+      </div>
+      <div class="notice ${itm ? 'error' : 'info'}" style="margin-top:12px">
+        ${itm ? 'The put is <b>in the money</b> — assignment is possible.' : 'The put is out of the money — you may not need to do anything yet.'}
+        Rolling means: buy back this put and sell a new one further out in time (sometimes lower strike), <b>ideally for a net credit</b>.
+      </div>
+      ${rolled ? '<div class="notice warn" style="margin-top:10px">You have rolled/closed this position several times. Rolling endlessly to avoid a bad pick is how small losses become big ones. Sometimes taking assignment — or the loss — is the right call.</div>' : ''}
+      <div class="action-grid">
+        <button class="btn btn-primary btn-sm" data-roll="${w.id}">Open roll calculator →</button>
+        <button class="btn btn-secondary btn-sm" data-accept="${w.id}">Accept assignment (go to Step 2)</button>
+      </div>
+      <div class="grid grid-2 mt">
+        <div><h4>If you roll</h4><ul class="muted" style="font-size:12.5px;line-height:1.7;padding-left:18px"><li>Only roll for a <b>net credit</b> unless you have a written reason.</li><li>Rolling down lowers your buy price but the new premium is smaller.</li><li>It buys time for the stock to recover.</li></ul></div>
+        <div><h4>If you accept assignment</h4><ul class="muted" style="font-size:12.5px;line-height:1.7;padding-left:18px"><li>Not a failure — it is Step 2 of the wheel.</li><li>You own 100 shares per contract at the strike; sell covered calls next.</li><li>Your cost basis is already reduced by the premium you collected.</li></ul></div>
+      </div>
+    </div>`;
 }
 
 export default {
@@ -50,6 +89,14 @@ export default {
 
     const st = state;
     const s = mergeSettings(ctx.state.settings);
+    const wheelRec = ctx.state.wheels.find((w) => w.id === st.wheelId);
+    const sm = wheelRec ? wheelSummary(wheelRec) : null;
+
+    // Rolling-first view for an open (likely losing) short put.
+    if (wheelRec && (wheelRec.state === 'short_put' || sm?.state === 'short_put')) {
+      return renderPutRoll(ctx, wheelRec, sm, st);
+    }
+
     const costBasis = adjustedCostBasis({ assignmentPrice: Number(st.assignmentPrice) || 0, premiums: Number(st.premiums) || 0, fees: Number(st.fees) || 0, dividends: Number(st.dividends) || 0, shares: Number(st.shares) || 100 });
     const price = st.currentPrice === '' ? null : Number(st.currentPrice);
     const scenario = recoveryScenario({ costBasis, currentPrice: price, thesisBroken: st.thesisBroken, settings: s });
@@ -138,6 +185,8 @@ export default {
   },
   mount(root, ctx) {
     root.querySelector('#recWheel')?.addEventListener('change', (e) => { state = loadFor(e.target.value, ctx); ctx.go(`/recovery?wheel=${e.target.value}`); });
+    root.querySelectorAll('[data-roll]').forEach((b) => { b.onclick = () => ctx.go(`/roll?wheel=${b.dataset.roll}&type=put`); });
+    root.querySelectorAll('[data-accept]').forEach((b) => { b.onclick = () => ctx.go(`/wheels?open=${b.dataset.accept}`); });
     root.querySelector('#recAdd')?.addEventListener('click', () => { state.candidates.push({ strike: '', bid: '', dte: '' }); ctx.reload(); });
     root.querySelectorAll('[data-log-call]').forEach((btn) => {
       btn.onclick = async () => {

@@ -1,4 +1,5 @@
 import { escapeHtml } from '../format.js';
+import { RULEBOOK } from '../rulebook.js';
 
 const TOPICS = [
   ['What is a put option?', 'A put gives its owner the right (not the obligation) to sell 100 shares at the strike price before expiry. When you SELL a put, you receive cash now and agree to BUY 100 shares at the strike if the buyer exercises.'],
@@ -22,32 +23,27 @@ export default {
   render() {
     return `
       <div class="card">
-        <h2>The wheel in one picture</h2>
+        <h2>The big idea in one sentence</h2>
+        <p>You get paid to wait to buy a stock you like at a lower price, and then you get paid again while you wait to sell it at a higher price. It is called "The Wheel" because it goes in a loop.</p>
+        <p class="muted">When you sell a put you are agreeing to buy 100 shares at the strike. In the wheel, assignment is <b>not a failure</b> — it is simply the signal to move to Step 2.</p>
         <div class="state-machine" style="margin:14px 0">
           <span class="state-node">Cash</span><span class="state-arrow">→</span>
-          <span class="state-node active">Sell cash-secured put</span><span class="state-arrow">→</span>
-          <span class="state-node">Expires worthless (keep premium)</span><span class="state-arrow">or</span>
+          <span class="state-node active">STEP 1 · Sell cash-secured put</span><span class="state-arrow">→</span>
+          <span class="state-node">Expires worthless (keep premium, repeat)</span><span class="state-arrow">or</span>
           <span class="state-node">Assigned (own shares)</span><span class="state-arrow">→</span>
-          <span class="state-node">Sell covered call</span><span class="state-arrow">→</span>
-          <span class="state-node">Called away → back to cash</span>
+          <span class="state-node">STEP 2 · Sell covered call</span><span class="state-arrow">→</span>
+          <span class="state-node">Called away → back to cash, repeat</span>
         </div>
-        <p class="muted">Every step is optional and every step is a decision. You are never forced to sell a call, and you can always simply hold or sell the shares.</p>
       </div>
 
       <div class="card mt">
-        <h2>Golden rules</h2>
-        <div class="grid grid-2" style="margin-top:12px">
-          ${[
-            'Only sell puts on stocks I would happily own for months.',
-            'Every put is 100% cash-secured — never use margin for puts.',
-            'Take profit at ~50% of the premium.',
-            'Avoid holding through earnings.',
-            'Never roll for a debit without a written reason.',
-            'Never sell calls below my adjusted cost basis without a plan.',
-            'Keep at least a 10% cash reserve.',
-            'Paper trade the full cycle before going live.',
-          ].map((r) => `<div class="check-item pass"><span class="check-ico">✅</span><div class="check-label">${escapeHtml(r)}</div></div>`).join('')}
-        </div>
+        <h2>${escapeHtml("The beginner's rule book")}</h2>
+        <p class="muted">Also available any time from the floating <b>Rules</b> button (bottom-right), where you can tick items off or float it over other tabs.</p>
+        ${RULEBOOK.map((section) => `
+          <div class="check-group-title">${escapeHtml(section.title)}</div>
+          <div class="checklist">
+            ${section.items.map((it) => `<div class="check-item ${it.ok ? 'pass' : 'fail'}"><span class="check-ico">${it.ok ? '✅' : '❌'}</span><div class="check-label">${escapeHtml(it.text)}</div></div>`).join('')}
+          </div>`).join('')}
       </div>
 
       <div class="section-head"><h2>Beginner guide</h2></div>

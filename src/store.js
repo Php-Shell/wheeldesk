@@ -3,7 +3,7 @@
 // all write actions. The store is tiny and synchronous; UI subscribes to it.
 // ---------------------------------------------------------------------------
 
-import { DEFAULT_SETTINGS, mergeSettings, presetSettings, wheelState, CONTRACT_MULTIPLIER } from './calc.js';
+import { DEFAULT_SETTINGS, mergeSettings, presetSettings, wheelState, capturedPct, CONTRACT_MULTIPLIER } from './calc.js';
 import { toNum, round, isoNow, todayISO } from './format.js';
 
 const KEY = 'wheel-desk-v3';
@@ -18,6 +18,7 @@ function emptyState() {
     account: { name: 'My paper account', budget: 10000, currency: 'USD', fxRate: 1 },
     settings: structuredClone(DEFAULT_SETTINGS),
     marks: {},
+    legMarks: {},
     watchlist: [],
     wheels: [],
     trades: [],
@@ -159,44 +160,70 @@ export function wheelSummary(w, s = state) {
   const mark = toNum(s.marks?.[w.ticker], null);
   const dte = st.daysToExpiry;
   const settings = mergeSettings(s.settings);
-  const put = st.openPut > 0;
-  const entries = { short_put: 'Short put open', holding: 'Holding shares', short_call: 'Short call open', complete: 'Wheel complete', idle: 'Idle' };
+
+  // How much of the open short option's premium has been captured so far.
+  const leg = st.lastEntry;
+  const legKey = leg ? `${w.ticker}|${leg.type}|${leg.strike}|${leg.expiry}` : null;
+  const legMid = legKey ? toNum(s.legMarks?.[legKey], null) : null;
+  const captured = leg && legMid != null
+    ? capturedPct({ entryMid: leg.mid, currentMid: legMid, contracts: leg.contracts, commission: settings.commission })
+    : null;
+  const target = Math.round(settings.takeProfitPct * 100);
 
   let status = 'green';
   let nextAction = 'No action needed right now.';
 
   if (st.state === 'short_put') {
-    const gross = st.premiums;
-    const profitPct = gross / Math.max(1, st.collateral);
+    const itm = mark !== null && st.putStrike && mark < st.putStrike;
     if (dte !== null && dte <= 0) {
       status = 'red';
-      nextAction = 'Expiry reached — mark it expired or assigned in the Actions panel.';
-    } else if (dte !== null && dte <= 7 && mark !== null && st.putStrike && mark < st.putStrike) {
+      nextAction = 'Expiry reached — mark it expired or assigned in the Actions panel. Assignment is not a failure: it is Step 2.';
+    } else if (dte !== null && dte <= 7 && itm) {
       status = 'red';
-      nextAction = `Expires in ${dte} days and is in the money — open the Assignment Assistant.`;
+      nextAction = `Expires in ${dte} days and is in the money — open the Recovery assistant to roll or accept assignment.`;
+    } else if (captured !== null && captured >= target) {
+      status = 'amber';
+      nextAction = `You've captured ${captured.toFixed(0)}% of the premium (target ${target}%) — consider buying to close and opening a new put.`;
     } else if (dte !== null && settings.timeRuleOn && dte <= settings.timeRuleDte) {
       status = 'amber';
       nextAction = `${dte} DTE — consider closing or rolling (only for a net credit).`;
-    } else if (profitPct >= settings.takeProfitPct * 0.9) {
-      status = 'amber';
-      nextAction = 'Approaching the 50% profit target — consider buying to close.';
+    } else if (legMid == null && leg) {
+      nextAction = `Track the current option price (from IBKR or the chain) so the ${target}% profit target can be checked.`;
     }
   } else if (st.state === 'holding') {
     status = 'amber';
-    nextAction = 'You own 100 shares per contract. Sell a covered call at or above your cost basis.';
+    nextAction = `You own 100 shares per contract — this is Step 2. Sell a covered call at or above your cost basis${st.costBasis !== null ? ` (${'$'}${st.costBasis.toFixed(2)})` : ''}.`;
   } else if (st.state === 'short_call') {
-    if (dte !== null && dte <= settings.timeRuleDte) {
+    const itm = mark !== null && st.callStrike && mark > st.callStrike;
+    if (captured !== null && captured >= target) {
       status = 'amber';
-      nextAction = `${dte} DTE on the covered call — consider rolling up/out for a net credit.`;
+      nextAction = `You've captured ${captured.toFixed(0)}% of the call premium (target ${target}%) — consider buying it back and selling another.`;
+    } else if (dte !== null && settings.timeRuleOn && dte <= settings.timeRuleDte) {
+      status = 'amber';
+      nextAction = `${dte} DTE on the covered call — consider rolling up/out for a net credit${itm ? ' (it is in the money)' : ''}.`;
     } else {
-      nextAction = 'Covered call open. Let it decay; watch ex-dividend dates.';
+      nextAction = 'Covered call open. Let it decay; watch ex-dividend dates for early-assignment risk.';
     }
   } else if (st.state === 'complete') {
     status = 'green';
-    nextAction = 'Wheel complete. Consider the next candidate in the Screener.';
+    nextAction = 'Wheel complete — back to cash. Start again from the Screener when you are ready.';
   }
 
-  return { ...st, mark, dte, status, nextAction, trades, dividends, pnl: st.premiums + st.realized + (mark !== null && st.shares > 0 ? (mark - (st.costBasis ?? mark)) * st.shares : 0) };
+  return {
+    ...st,
+    mark,
+    dte,
+    status,
+    nextAction,
+    captured,
+    legMid,
+    legKey,
+    leg,
+    target,
+    trades,
+    dividends,
+    pnl: st.premiums + st.realized + (mark !== null && st.shares > 0 ? (mark - (st.costBasis ?? mark)) * st.shares : 0),
+  };
 }
 
 // ---- Actions -------------------------------------------------------------
@@ -227,6 +254,17 @@ export const actions = {
         if (n !== null) d.marks[ticker] = n;
       }
     });
+  },
+  // Current mid price of an open short option, keyed by ticker|type|strike|expiry.
+  setLegMarks(marks) {
+    return mutate((d) => {
+      d.legMarks = d.legMarks || {};
+      for (const [key, mid] of Object.entries(marks || {})) {
+        const n = toNum(mid, null);
+        if (n === null) delete d.legMarks[key];
+        else d.legMarks[key] = n;
+      }
+    }, { silent: true });
   },
   setMark(ticker, price) {
     return mutate((d) => {
