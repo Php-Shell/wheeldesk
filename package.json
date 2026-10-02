@@ -1,1 +1,14 @@
-{"name":"wheel-desk","version":"1.0.0","private":true,"type":"module","scripts":{"test":"node --test tests/*.test.js","check":"node --check src/core.js && node --check src/app.js","dev":"python3 -m http.server 4173 -d ."},"dependencies":{}}
+{
+  "name": "wheel-desk",
+  "version": "2.0.0",
+  "private": true,
+  "type": "module",
+  "description": "A beginner-friendly cash-secured put and wheel strategy dashboard.",
+  "scripts": {
+    "dev": "netlify dev",
+    "serve": "python3 -m http.server 4173 -d .",
+    "test": "node --test tests/*.test.js",
+    "check": "node scripts/check.mjs"
+  },
+  "dependencies": {}
+}

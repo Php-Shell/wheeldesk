@@ -1,11 +1,205 @@
-import {checklist,validateSize,rollCalculator,scenarioThresholds,toCsv} from './core.js';import {load,save,addWheel,reset} from './state.js';import {auth} from './auth.js';
-let state=load(),view='overview',wizard={};const $=s=>document.querySelector(s);const money=n=>n==null?'—':`$${Number(n).toLocaleString(undefined,{minimumFractionDigits:2,maximumFractionDigits:2})}`;
-const titles={overview:'Good morning, planner.',screener:'A calmer way to screen.',wheels:'Your wheel ledger.',journal:'Notes that compound.',guide:'The wheel, without the noise.',settings:'Account & data.'};
-function render(){const v=$('#view');$('#pageTitle').textContent=titles[view];document.querySelectorAll('.nav-item').forEach(x=>x.classList.toggle('active',x.dataset.view===view));v.innerHTML=views[view]();bind();}
-const views={overview:()=>`<div class="grid grid-4"><div class="card metric"><span class="label">Paper equity</span><strong>${money(state.account.value)}</strong><span class="subtle">Local planning balance</span></div><div class="card metric"><span class="label">Available cash</span><strong>${money(state.account.cash)}</strong><span class="subtle">Reserve protected · ${money(state.account.value*.1)}</span></div><div class="card metric"><span class="label">Open wheels</span><strong>${state.wheels.filter(w=>w.status==='open').length}</strong><span class="subtle">${state.wheels.length} ledger records</span></div><div class="card metric"><span class="label">Sync</span><strong id="syncStatus">${auth.get()?'signed in':'offline'}</strong><span class="subtle">${auth.configured()?'Supabase ready':'Local-only mode'}</span></div></div><div class="card"><div class="section-head"><h3>Active ledger</h3><button class="secondary" data-view="wheels">View all →</button></div>${wheelTable(state.wheels)}</div>`,wheels:()=>`<div class="card"><div class="section-head"><div><span class="eyebrow">EVENT-SOURCED LEDGER</span><h2>Wheels</h2></div><button class="primary" id="newWheelInline">+ Add wheel</button></div>${wheelTable(state.wheels)}<p class="subtle">Paper records only. Unknown market marks are never fabricated.</p></div>`,screener:()=>`<div class="card"><span class="eyebrow">MANUAL / PROVIDER CHECKLIST</span><h2>Before you write</h2><p class="subtle">${checklist.length} checks. Market proxy is authenticated and timestamps provider responses.</p><div class="checklist">${checklist.map(([k,t])=>`<label class="check"><input type="checkbox" data-check="${k}" ${state.settings.checks?.[k]?'checked':''}>${t}</label>`).join('')}</div><div class="section-head"><button class="primary" id="scenarioBtn">Recovery assistant</button><button class="secondary" id="rollBtn">Roll calculator</button></div><div id="assistant"></div></div>`,journal:()=>`<div class="grid grid-2"><div class="card"><h2>Journal</h2><textarea id="journalText" rows="6" placeholder="What did you notice?"></textarea><button class="primary" id="saveJournal">Save note</button></div><div class="card"><h3>Recent</h3>${(state.journal||[]).map(x=>`<p><span class="subtle">${x.date}</span><br>${x.text}</p>`).join('')||'<p class="subtle">No notes yet.</p>'}</div></div>`,guide:()=>`<div class="guide-grid"><div class="card"><h3>Own → write → manage</h3><p class="subtle">Sell only when assignment is acceptable. This app plans; it never sends orders.</p></div><div class="card"><h3>Collateral</h3><p class="subtle">Covered calls: shares × strike. Puts: contracts × strike × 100. Premium is not collateral.</p></div><div class="card"><h3>Safety rail</h3><p class="subtle">50% maximum wheel collateral and 10% reserve are explicit defaults.</p></div></div>`,settings:()=>`<div class="grid grid-2"><div class="card"><h2>Account</h2><p class="subtle">${auth.get()?.user?.email||'Not signed in'} · ${auth.configured()?'Supabase configured':'Local-only'}</p><div class="form-grid"><input id="email" type="email" placeholder="email"><input id="password" type="password" placeholder="password"></div><button class="primary" id="signIn">Sign in</button> <button class="secondary" id="signUp">Sign up</button> <button class="secondary" id="signOut">Sign out</button><p id="authMsg" class="subtle"></p></div><div class="card"><h2>Backup & sync</h2><button class="primary" id="exportCsv">Export CSV</button> <button class="secondary" id="exportJson">Export JSON</button> <button class="secondary" id="syncNow">Sync now</button><button class="secondary" id="resetBtn">Reset local ledger</button><p class="subtle">Offline edits remain local. Sync failures are surfaced; remote data never silently overwrites local data.</p></div></div>`};
-function wheelTable(ws){return `<table class="table"><thead><tr><th>Symbol</th><th>Stage</th><th>Strike</th><th>Expiry</th><th>Collateral</th></tr></thead><tbody>${ws.map(w=>`<tr><td class="symbol">${w.symbol}</td><td>${w.status}</td><td>${money(w.strike)}</td><td>${w.expiry}</td><td>${money(w.shares*w.strike)}</td></tr>`).join('')}</tbody></table>`}
-function download(name,text,type){const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([text],{type}));a.download=name;a.click()}
-function bind(){document.querySelectorAll('[data-view]').forEach(b=>b.onclick=()=>{view=b.dataset.view;render()});document.querySelectorAll('[data-check]').forEach(c=>c.onchange=()=>{state.settings.checks={...(state.settings.checks||{}),[c.dataset.check]:c.checked};save(state)});$('#newWheelInline')?.addEventListener('click',openWizard);$('#saveJournal')?.addEventListener('click',()=>{const t=$('#journalText').value.trim();if(t){state.journal.unshift({date:new Date().toISOString().slice(0,10),text:t});save(state);render()}});$('#exportCsv')?.addEventListener('click',()=>download('wheel-desk-wheels.csv',toCsv(state.wheels),'text/csv'));$('#exportJson')?.addEventListener('click',()=>download('wheel-desk-backup.json',JSON.stringify(state,null,2),'application/json'));$('#resetBtn')?.addEventListener('click',()=>{state=reset();render()});$('#syncNow')?.addEventListener('click',async()=>{try{await auth.sync(state);$('#authMsg').textContent='Sync complete.'}catch(e){$('#authMsg').textContent=e.message}});$('#signIn')?.addEventListener('click',()=>doAuth('signIn'));$('#signUp')?.addEventListener('click',()=>doAuth('signUp'));$('#signOut')?.addEventListener('click',async()=>{await auth.signOut();render()});$('#scenarioBtn')?.addEventListener('click',()=>$('#assistant').innerHTML='<div class="card"><h3>Recovery assistant</h3><p class="subtle">Enter manual thresholds; review before saving.</p><input id="entry" type="number" placeholder="entry price"><input id="put" type="number" placeholder="put strike"><input id="call" type="number" placeholder="call strike"><button class="primary" id="calcScenario">Calculate</button><div id="scenarioOut"></div></div>');$('#calcScenario')?.addEventListener('click',()=>{const x=scenarioThresholds({entryPrice:$('#entry').value,putStrike:$('#put').value,callStrike:$('#call').value});$('#scenarioOut').textContent=`Assign ≤ $${x.assignmentAtOrBelow}; call away ≥ $${x.callAwayAtOrAbove}; capital $${x.capitalRequired.toFixed(2)}.`});$('#rollBtn')?.addEventListener('click',()=>$('#assistant').innerHTML='<div class="card"><input id="contracts" type="number" placeholder="contracts" value="1"><input id="old" type="number" placeholder="old premium"><input id="debit" type="number" placeholder="close debit"><input id="new" type="number" placeholder="new premium"><button class="primary" id="calcRoll">Calculate roll</button><div id="rollOut"></div></div>');$('#calcRoll')?.addEventListener('click',()=>{const x=rollCalculator({contracts:$('#contracts').value,oldPremium:$('#old').value,closeDebit:$('#debit').value,newPremium:$('#new').value});$('#rollOut').textContent=`Net credit: ${money(x.netCredit)}.`})}
-async function doAuth(kind){try{await auth[kind]($('#email').value,$('#password').value);$('#authMsg').textContent='Authenticated.';render()}catch(e){$('#authMsg').textContent=e.message}}
-function openWizard(){wizard={symbol:'',shares:100,strike:'',expiry:''};$('#wheelDialog').showModal();$('#wizardBody').innerHTML='<div class="form-grid"><input id="fSymbol" placeholder="Ticker"><input id="fShares" type="number" value="100"><input id="fStrike" type="number" placeholder="Strike"><input id="fExpiry" type="date"></div>'}
-$('#newWheelBtn').onclick=openWizard;$('#wizardNext').onclick=()=>{wizard={symbol:$('#fSymbol').value.toUpperCase(),shares:+$('#fShares').value,strike:+$('#fStrike').value,expiry:$('#fExpiry').value};if(!wizard.symbol||!validateSize({accountValue:state.account.value,shares:wizard.shares,strike:wizard.strike}).ok)return alert('Invalid or oversized wheel.');state=addWheel(state,{...wizard,status:'planned',source:'manual',mode:'paper'});$('#wheelDialog').close();view='wheels';render()};document.querySelector('#nav').onclick=e=>{const b=e.target.closest('[data-view]');if(b){view=b.dataset.view;render()}};document.querySelector('#themeBtn').onclick=e=>{const d=document.body.classList.toggle('dark');e.currentTarget.textContent=d?'☾':'☼';e.currentTarget.title=d?'Switch to light':'Switch to dark'};auth.restore().then(render);render();
+// ---------------------------------------------------------------------------
+// Wheel Desk — application shell, hash router and global wiring.
+// ---------------------------------------------------------------------------
+
+import { getState, subscribe, actions, deriveAccount } from './store.js';
+import { auth } from './supabase.js';
+import { getConfig, loadTickerData, loadOptions, searchSymbols, testProvider } from './providers.js';
+import * as ui from './ui.js';
+import * as format from './format.js';
+import { views, DEFAULT_VIEW } from './views/index.js';
+import { marketStatus, fmtInZone, localTimeZone, downloadText, escapeHtml } from './format.js';
+import { buildBackup, parseBackup } from './export.js';
+
+let globalConfig = { providers: {} };
+let route = { name: DEFAULT_VIEW, params: {} };
+
+const root = document.getElementById('view');
+
+function parseHash() {
+  const raw = location.hash.replace(/^#\/?/, '');
+  const [path, query] = raw.split('?');
+  const name = (path || DEFAULT_VIEW).split('/')[0] || DEFAULT_VIEW;
+  const params = {};
+  new URLSearchParams(query || '').forEach((v, k) => { params[k] = v; });
+  return { name: views[name] ? name : DEFAULT_VIEW, params };
+}
+
+function makeContext() {
+  return {
+    get state() { return getState(); },
+    get account() { return deriveAccount(getState()); },
+    get globalConfig() { return globalConfig; },
+    auth,
+    actions,
+    providers: { loadTickerData, loadOptions, searchSymbols, testProvider },
+    ui,
+    format,
+    route,
+    go: (path) => { location.hash = `#${path.startsWith('/') ? path : `/${path}`}`; },
+    toast: ui.toast,
+    confirm: ui.confirmDialog,
+    openAccount: () => openAccount(),
+    reload: render,
+  };
+}
+
+let ctx = null;
+
+function render() {
+  if (!ctx) ctx = makeContext();
+  route = parseHash();
+  const view = views[route.name] || views[DEFAULT_VIEW];
+
+  try {
+    view.beforeRender?.(route);
+  } catch (err) {
+    console.error(err);
+  }
+
+  const cfg = getState().settings || {};
+  document.getElementById('pageTitle').textContent = view.title || 'Wheel Desk';
+  const mkt = marketStatus();
+  document.getElementById('topEyebrow').textContent = `${getState().account.name || 'Paper account'} / ${mkt.label.toUpperCase()} / ${mkt.clock}`;
+  const mb = document.getElementById('marketBadge');
+  mb.textContent = `${mkt.state === 'open' ? '●' : '○'} ${mkt.label}`;
+  mb.className = `market-badge ${mkt.state === 'open' ? '' : 'closed'}`;
+
+  document.querySelectorAll('.nav-item').forEach((a) => a.classList.toggle('active', a.dataset.view === route.name));
+
+  try {
+    root.innerHTML = view.render(ctx);
+  } catch (err) {
+    console.error(err);
+    root.innerHTML = `<div class="card"><h2>Something went wrong rendering this page</h2><p class="muted">${escapeHtml(err.message)}</p><button class="btn btn-secondary" onclick="location.reload()">Reload</button></div>`;
+  }
+  try {
+    view.mount?.(root, ctx);
+  } catch (err) {
+    console.error(err);
+    ui.toast(`Page error: ${err.message}`, 'error');
+  }
+
+  updateChrome();
+}
+
+function updateChrome() {
+  const s = getState();
+  const toggle = document.getElementById('modeToggle');
+  const live = (s.account.mode || 'paper') === 'live';
+  toggle.classList.toggle('on', !live);
+  toggle.classList.toggle('off', live);
+  const dot = document.getElementById('syncDot');
+  const text = document.getElementById('syncText');
+  if (auth.get()) { dot.className = 'status-dot'; text.textContent = `Signed in · ${auth.get().user?.email || ''}`; }
+  else if (!auth.configured()) { dot.className = 'status-dot offline'; text.textContent = 'Local ledger'; }
+  else { dot.className = 'status-dot pending'; text.textContent = 'Local ledger (not synced)'; }
+  const avatar = document.getElementById('accountBtn');
+  if (avatar) avatar.textContent = (s.account.name || 'WD').split(/\s+/).map((w) => w[0]).join('').slice(0, 2).toUpperCase();
+}
+
+// ---- Global controls -----------------------------------------------------
+
+function wireControls() {
+  document.getElementById('modeToggle').onclick = () => {
+    const s = getState();
+    const next = (s.account.mode || 'paper') === 'live' ? 'paper' : 'live';
+    actions.updateAccount({ mode: next });
+    ui.toast(`Switched to ${next} mode. New wheels default to ${next}.`);
+    render();
+  };
+
+  document.getElementById('themeBtn').onclick = (e) => {
+    const dark = document.body.classList.toggle('dark');
+    e.currentTarget.textContent = dark ? '☾' : '☼';
+    e.currentTarget.title = dark ? 'Switch to light' : 'Switch to dark';
+  };
+
+  document.getElementById('newWheelBtn').onclick = () => { location.hash = '#/new'; };
+
+  document.getElementById('exportBtn').onclick = () => {
+    downloadText('wheel-desk-backup.json', JSON.stringify(buildBackup(getState()), null, 2), 'application/json');
+    actions.markExported();
+    ui.toast('Backup exported.');
+  };
+
+  document.getElementById('importInput').onchange = async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    try {
+      const data = parseBackup(await file.text());
+      if (await ui.confirmDialog('Importing replaces your local data. Continue?', { danger: true, confirmText: 'Import' })) {
+        actions.importState(data);
+        ui.toast('Backup imported.');
+        render();
+      }
+    } catch (err) {
+      ui.toast(err.message, 'error');
+    }
+    e.target.value = '';
+  };
+
+  document.getElementById('accountBtn').onclick = openAccount;
+
+  document.getElementById('modal').addEventListener('click', (e) => {
+    if (e.target.id === 'modal') ui.closeModal();
+  });
+
+  window.addEventListener('hashchange', render);
+  window.addEventListener('resize', () => {});
+
+  // Auto-refresh the market clock every minute.
+  setInterval(() => {
+    const mkt = marketStatus();
+    document.getElementById('topEyebrow').textContent = `${getState().account.name || 'Paper account'} / ${mkt.label.toUpperCase()} / ${mkt.clock}`;
+  }, 60000);
+}
+
+function openAccount() {
+  const session = auth.get();
+  ui.openModal('Account & sync', `
+    <p class="muted">${auth.configured() ? 'Sign in to sync your ledger to Supabase.' : 'Supabase is not configured for this deployment. Local data still works.'}</p>
+    ${session ? `<div class="notice info">Signed in as ${escapeHtml(session.user?.email || '')}</div>
+      <button class="btn btn-danger mt" id="signOut">Sign out</button>` : `
+      <div class="field"><label>Email</label><input id="authEmail" type="email" placeholder="you@example.com" /></div>
+      <div class="field"><label>Password</label><input id="authPassword" type="password" placeholder="••••••••" /></div>
+      <div class="row wrap"><button class="btn btn-primary" id="signIn">Sign in</button><button class="btn btn-secondary" id="signUp">Create account</button></div>`}
+    <div id="authMsg" class="mt"></div>`, (body, close) => {
+    body.querySelector('#signOut')?.addEventListener('click', async () => {
+      await auth.signOut();
+      close();
+      ui.toast('Signed out.');
+      render();
+    });
+    const doAuth = async (kind) => {
+      const email = body.querySelector('#authEmail').value;
+      const password = body.querySelector('#authPassword').value;
+      const msg = body.querySelector('#authMsg');
+      try {
+        const res = await auth[kind](email, password);
+        msg.innerHTML = res?.access_token ? '<div class="notice info">Signed in.</div>' : '<div class="notice info">Check your email to confirm your account, then sign in.</div>';
+        render();
+      } catch (err) {
+        msg.innerHTML = `<div class="notice error">${escapeHtml(err.message)}</div>`;
+      }
+    };
+    body.querySelector('#signIn')?.addEventListener('click', () => doAuth('signIn'));
+    body.querySelector('#signUp')?.addEventListener('click', () => doAuth('signUp'));
+  });
+}
+
+// ---- Boot ----------------------------------------------------------------
+
+async function boot() {
+  const cfg = await getConfig();
+  globalConfig = cfg;
+  auth.configure(cfg);
+  await auth.restore().catch(() => null);
+  ctx = makeContext();
+  wireControls();
+  subscribe(() => render());
+  if (!location.hash) location.hash = `#/${DEFAULT_VIEW}`;
+  render();
+}
+
+boot();

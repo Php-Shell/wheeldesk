@@ -1,8 +1,21 @@
 [build]
 publish = "."
+
 [functions]
 directory = "netlify/functions"
+node_bundler = "esbuild"
+
 [[redirects]]
-from = "/api/market/*"
+from = "/api/market"
 to = "/.netlify/functions/market"
+status = 200
+
+[[redirects]]
+from = "/api/config"
+to = "/.netlify/functions/config"
+status = 200
+
+[[redirects]]
+from = "/*"
+to = "/index.html"
 status = 200

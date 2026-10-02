@@ -1,1 +1,86 @@
-<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="description" content="Wheel Desk — a calm, ledger-first options wheel planner"><title>Wheel Desk · Options ledger</title><link rel="stylesheet" href="src/styles.css"></head><body><div class="app-shell"><aside class="sidebar"><div class="brand"><span class="brand-mark">◒</span><div><b>Wheel Desk</b><small>ledger / practice</small></div></div><div class="mode-switch"><span>Paper</span><button id="modeToggle" class="toggle on" aria-label="Toggle live mode"><i></i></button><span>Live</span></div><nav id="nav"><button class="nav-item active" data-view="overview">⌂ <span>Overview</span></button><button class="nav-item" data-view="screener">⌁ <span>Screener</span></button><button class="nav-item" data-view="wheels">◌ <span>Wheels</span></button><button class="nav-item" data-view="journal">▤ <span>Journal</span></button><button class="nav-item" data-view="guide">? <span>Guide</span></button><button class="nav-item" data-view="settings">⚙ <span>Settings</span></button></nav><div class="sidebar-foot"><span class="status-dot"></span><span>Local ledger online</span><button id="themeBtn" class="icon-btn" title="Switch to dark">☼</button></div></aside><main class="main"><header class="topbar"><div><span class="eyebrow">PAPER ACCOUNT / OCT 02, 2026</span><h1 id="pageTitle">Good morning, Alex.</h1></div><div class="top-actions"><button id="newWheelBtn" class="primary">+ New wheel</button><button id="exportBtn" class="icon-btn" title="Export JSON">⇩</button><label class="icon-btn" title="Import JSON">⇧<input id="importInput" type="file" accept="application/json" hidden></label><div class="avatar">AD</div></div></header><div id="notice" class="notice hidden"></div><section id="view" class="view"></section></main></div><dialog id="wheelDialog"><form method="dialog" id="wheelForm"><div class="dialog-head"><div><span class="eyebrow">5-STEP WHEEL INTAKE</span><h2>Start a wheel</h2></div><button value="cancel" class="icon-btn">×</button></div><div class="stepper"><span class="active">01 Idea</span><span>02 Checklist</span><span>03 Size</span><span>04 Review</span><span>05 Save</span></div><div id="wizardBody"></div><div class="dialog-actions"><button value="cancel" class="secondary">Cancel</button><button type="button" id="wizardNext" class="primary">Continue →</button></div></form></dialog><script>window.WHEEL_SUPABASE_URL=window.WHEEL_SUPABASE_URL||"";window.WHEEL_SUPABASE_ANON_KEY=window.WHEEL_SUPABASE_ANON_KEY||"";</script><script type="module" src="src/app.js"></script></body></html>
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="description" content="Wheel Desk — a calm, beginner-friendly cash-secured put and wheel strategy dashboard." />
+  <meta name="color-scheme" content="light dark" />
+  <title>Wheel Desk · Cash-secured put & wheel dashboard</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>☸️</text></svg>" />
+  <link rel="stylesheet" href="src/styles.css" />
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js" defer></script>
+</head>
+<body>
+  <div class="app-shell">
+    <aside class="sidebar">
+      <a class="brand" href="#/dashboard">
+        <span class="brand-mark">☸</span>
+        <div><b>Wheel Desk</b><small>learn · plan · record</small></div>
+      </a>
+
+      <div class="mode-switch" role="group" aria-label="Account mode">
+        <span>Paper</span>
+        <button id="modeToggle" class="toggle on" aria-label="Toggle paper or live mode"><i></i></button>
+        <span>Live</span>
+      </div>
+
+      <nav id="nav" aria-label="Main navigation">
+        <a class="nav-item" href="#/dashboard" data-view="dashboard"><span class="nav-ico">⌂</span><span>Dashboard</span></a>
+        <a class="nav-item" href="#/screener" data-view="screener"><span class="nav-ico">⌕</span><span>Screener</span></a>
+        <a class="nav-item" href="#/new" data-view="new"><span class="nav-ico">＋</span><span>New wheel</span></a>
+        <a class="nav-item" href="#/wheels" data-view="wheels"><span class="nav-ico">◐</span><span>Wheels</span></a>
+        <a class="nav-item" href="#/recovery" data-view="recovery"><span class="nav-ico">⛑</span><span>Recovery</span></a>
+        <a class="nav-item" href="#/roll" data-view="roll"><span class="nav-ico">⇄</span><span>Roll</span></a>
+        <a class="nav-item" href="#/journal" data-view="journal"><span class="nav-ico">▤</span><span>Journal</span></a>
+        <a class="nav-item" href="#/learn" data-view="learn"><span class="nav-ico">?</span><span>Learn</span></a>
+        <a class="nav-item" href="#/settings" data-view="settings"><span class="nav-ico">⚙</span><span>Settings</span></a>
+      </nav>
+
+      <div class="sidebar-foot">
+        <span class="status-dot" id="syncDot"></span>
+        <span id="syncText">Local ledger</span>
+        <button id="themeBtn" class="icon-btn" title="Switch to dark">☼</button>
+      </div>
+    </aside>
+
+    <main class="main">
+      <header class="topbar">
+        <div>
+          <span class="eyebrow" id="topEyebrow">LOADING…</span>
+          <h1 id="pageTitle">Wheel Desk</h1>
+        </div>
+        <div class="top-actions">
+          <span class="market-badge" id="marketBadge" title="US market status">●</span>
+          <button id="newWheelBtn" class="btn btn-primary">+ New wheel</button>
+          <button id="exportBtn" class="icon-btn" title="Export backup (JSON)">⇩</button>
+          <label class="icon-btn" title="Import backup (JSON)">⇧<input id="importInput" type="file" accept="application/json" hidden /></label>
+          <button id="accountBtn" class="avatar" title="Account & sync">AD</button>
+        </div>
+      </header>
+
+      <div id="notice" class="notice hidden" role="status"></div>
+      <section id="view" class="view" aria-live="polite"></section>
+
+      <footer class="disclaimer">
+        Educational tool, not financial advice. Data may be delayed or inaccurate. Always verify in your broker before trading. Wheel Desk never places orders.
+      </footer>
+    </main>
+  </div>
+
+  <dialog id="modal" class="modal">
+    <div class="modal-head">
+      <h2 id="modalTitle">Details</h2>
+      <button class="icon-btn" id="modalClose" aria-label="Close">×</button>
+    </div>
+    <div id="modalBody" class="modal-body"></div>
+  </dialog>
+
+  <div id="toasts" class="toasts" aria-live="polite"></div>
+
+  <script>
+    window.WHEEL_SUPABASE_URL = window.WHEEL_SUPABASE_URL || "";
+    window.WHEEL_SUPABASE_ANON_KEY = window.WHEEL_SUPABASE_ANON_KEY || "";
+  </script>
+  <script type="module" src="src/app.js"></script>
+</body>
+</html>
