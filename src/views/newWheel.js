@@ -1,15 +1,25 @@
 import { putMetrics, validatePutTrade, mergeSettings } from '../calc.js';
-import { money, pct, escapeHtml, dte, todayISO, isoNow } from '../format.js';
+import { money, pct, escapeHtml, dte, todayISO, isoNow, toDMY } from '../format.js';
 import { field, toast, tip, badge } from '../ui.js';
 
 let wizard = null;
+let lastPrefillKey = null;
 
-function reset(prefill = {}, cfg = {}) {
+function prefillFromParams(p = {}) {
+  return { symbol: p.symbol, expiry: p.expiry, strike: p.strike, premium: p.premium, delta: p.delta, oi: p.oi };
+}
+
+function reset(prefill = {}) {
   wizard = {
     step: 0,
     ticker: prefill.symbol || '',
     name: '',
     price: null,
+    marketCap: null,
+    eps: null,
+    nextEarnings: null,
+    ma200: null,
+    verdict: null,
     expiry: prefill.expiry || '',
     strike: prefill.strike || '',
     contracts: 1,
@@ -31,8 +41,19 @@ function reset(prefill = {}, cfg = {}) {
 export default {
   title: 'New wheel',
   beforeRender(route) {
-    if (!wizard || route?.params?.symbol) {
-      reset({ symbol: route?.params?.symbol, expiry: route?.params?.expiry, strike: route?.params?.strike, premium: route?.params?.premium, delta: route?.params?.delta, oi: route?.params?.oi });
+    const p = route?.params || {};
+    const key = p.symbol ? `${p.symbol}|${p.strike || ''}|${p.expiry || ''}|${p.premium || ''}|${p.delta || ''}|${p.oi || ''}` : null;
+    if (!wizard) {
+      reset(prefillFromParams(p));
+      lastPrefillKey = key;
+      return;
+    }
+    // Only reset when a *different* prefill arrives — otherwise every re-render
+    // (e.g. pressing Continue) would wipe the wizard and the buttons would
+    // appear to do nothing.
+    if (key && key !== lastPrefillKey) {
+      reset(prefillFromParams(p));
+      lastPrefillKey = key;
     }
   },
   render(ctx) {
@@ -41,29 +62,47 @@ export default {
     const step = wizard.step;
     const labels = ['Ticker', 'Strike & expiry', 'Review', 'IBKR instructions', 'Log fill'];
     const stepper = `<div class="stepper">${labels.map((l, i) => `<span class="step ${i === step ? 'active' : ''} ${i < step ? 'done' : ''}"><span class="step-num">${i + 1}</span>${l}</span>`).join('')}</div>`;
+    const progress = `<div class="progress" style="height:6px;margin:0 0 18px"><i style="width:${((step + 1) / labels.length) * 100}%"></i></div>`;
 
     let body = '';
     if (step === 0) {
       const suggestions = ctx.state.watchlist.map((w) => `<button class="chip" data-pick="${w.symbol}">${w.symbol}</button>`).join('');
+      const loadedInfo = wizard.loaded
+        ? `<div class="grid grid-3 mt">
+            <div class="kv"><span>Company</span><span>${escapeHtml(wizard.name || wizard.ticker)}</span></div>
+            <div class="kv"><span>Price</span><span>${wizard.price != null ? money(wizard.price) : '—'}</span></div>
+            <div class="kv"><span>Market cap</span><span>${wizard.marketCap != null ? money(wizard.marketCap, 'USD', 0) : '—'}</span></div>
+            <div class="kv"><span>TTM EPS</span><span>${wizard.eps != null ? Number(wizard.eps).toFixed(2) : '—'}</span></div>
+            <div class="kv"><span>Next earnings</span><span>${wizard.nextEarnings ? toDMY(wizard.nextEarnings) : '—'}</span></div>
+            <div class="kv"><span>200-DMA</span><span>${wizard.ma200 != null ? money(wizard.ma200) : '—'}</span></div>
+          </div>
+          ${wizard.verdict ? `<div class="notice ${wizard.verdict.className === 'pass' ? 'info' : 'error'}" style="margin-top:10px">Screener verdict: <b>${escapeHtml(wizard.verdict.label)}</b>${wizard.verdict.score ? ` (${escapeHtml(wizard.verdict.score)})` : ''}${wizard.verdict.className !== 'pass' ? ' — open it in the Screener to confirm the manual items.' : ''}</div>` : '<p class="muted" style="font-size:12px;margin-top:8px">Tip: run this ticker through the Screener first so the checklist and chain are already loaded.</p>'}`
+        : '';
       body = `
         <div class="card pad-lg">
           <h2>Step 1 · Which ticker?</h2>
           <p class="muted">Only sell puts on a stock or ETF you would be happy to own. Preferably a name that passed the checklist.</p>
           <div class="row" style="gap:10px;flex-wrap:wrap">
             <input id="wTicker" name="ticker" placeholder="Ticker (e.g. KO)" value="${escapeHtml(wizard.ticker)}" style="max-width:220px" />
-            <button class="btn btn-secondary" id="wLoad">Load price & info</button>
+            <button class="btn btn-secondary" id="wLoad" ${wizard.loading ? 'disabled' : ''}>${wizard.loading ? 'Loading…' : 'Load price & info'}</button>
           </div>
           ${suggestions ? `<div class="chip-row mt">${suggestions}</div>` : ''}
-          ${wizard.loaded ? `<div class="notice info" style="margin-top:14px">${escapeHtml(wizard.name || wizard.ticker)} · price ${money(wizard.price)}</div>` : ''}
-          ${wizard.loading ? '<p class="muted mt">Loading…</p>' : ''}
+          ${wizard.loading ? `<div class="progress indeterminate" style="height:5px;margin-top:14px"><i></i></div><p class="muted" style="font-size:12px;margin-top:6px">Fetching quote, fundamentals, earnings and 200-day average…</p>` : ''}
+          ${loadedInfo}
+          <div class="notice info" style="margin-top:14px"><b>How this works:</b> 1 Ticker → 2 Strike &amp; expiry → 3 Review the risk → 4 Place it in IBKR → 5 Log the fill. You can go back at any time; nothing is saved until step 5.</div>
         </div>`;
     } else if (step === 1) {
+      const maxColl = ctx.account.budget * s.maxPerWheelPct;
+      const affordable = Math.floor(maxColl / 100);
       body = `
         <div class="card pad-lg">
           <h2>Step 2 · Choose expiry and strike</h2>
           <p class="muted">Prefer 30–45 days to expiry and a delta between 0.15 and 0.30. Enter the numbers from your IBKR option chain.</p>
-          ${field({ label: 'Expiry date', name: 'expiry', type: 'date', value: wizard.expiry })}
-          ${field({ label: 'Contracts', name: 'contracts', type: 'number', min: 1, value: wizard.contracts })}
+          <div class="notice info">Your per-wheel limit is <b>${money(maxColl)}</b> (${pct(s.maxPerWheelPct * 100, 0)} of ${money(ctx.account.budget)}), so one contract fits strikes up to about <b>$${affordable}</b>.${wizard.price != null ? ` Current price ${money(wizard.price)}.` : ''}</div>
+          <div class="form-grid">
+            ${field({ label: 'Expiry date', name: 'expiry', type: 'date', value: wizard.expiry })}
+            ${field({ label: 'Contracts', name: 'contracts', type: 'number', min: 1, value: wizard.contracts })}
+          </div>
           <div class="form-grid-3">
             ${field({ label: 'Strike', name: 'strike', value: wizard.strike, placeholder: '60' })}
             ${field({ label: 'Bid', name: 'bid', value: wizard.bid, placeholder: '0.90' })}
@@ -74,6 +113,7 @@ export default {
             ${field({ label: 'Delta', name: 'delta', value: wizard.delta, placeholder: '-0.20' })}
           </div>
           ${field({ label: 'Open interest', name: 'openInterest', value: wizard.openInterest, placeholder: '500' })}
+          <div id="wPreview" class="mt"></div>
         </div>`;
     } else if (step === 2) {
       const m = metrics();
@@ -134,7 +174,7 @@ export default {
         </div>`;
     }
 
-    return `${stepper}${body}
+    return `${stepper}${progress}${body}
       <div class="row-between mt">
         <button class="btn btn-secondary" id="wBack" ${step === 0 ? 'disabled' : ''}>← Back</button>
         ${step < 4 ? `<button class="btn btn-primary" id="wNext">Continue →</button>` : `<button class="btn btn-primary" id="wSave">Save wheel</button>`}
@@ -155,16 +195,18 @@ export default {
       ctx.reload();
       try {
         const data = await ctx.providers.loadTickerData(wizard.ticker, ctx.auth.token());
-        if (data?.quote?.price != null) {
-          wizard.price = data.quote.price;
-          wizard.name = data.profile?.name || wizard.ticker;
-          if (!wizard.mid && data.quote.price) { /* keep manual */ }
-        } else {
-          toast(data?.messages?.[0] || 'No live price available; you can continue manually.', 'warn');
-          wizard.name = wizard.ticker;
-        }
+        wizard.name = data?.profile?.name || wizard.ticker;
+        wizard.price = data?.quote?.price ?? null;
+        wizard.marketCap = data?.profile?.marketCap ?? null;
+        wizard.eps = data?.metrics?.epsTTMFromQuarters ?? data?.metrics?.epsTTM ?? null;
+        wizard.nextEarnings = data?.earnings?.nextDate ?? null;
+        wizard.ma200 = data?.ma200 ?? null;
+        const w = ctx.state.watchlist.find((x) => x.symbol === wizard.ticker);
+        wizard.verdict = w?.verdict || null;
+        if (data?.quote?.price == null) toast(data?.messages?.[0] || 'No live price available; you can continue manually.', 'warn');
       } catch (err) {
         toast(err.message, 'error');
+        wizard.name = wizard.ticker;
       }
       wizard.loaded = true;
       wizard.loading = false;
@@ -173,7 +215,8 @@ export default {
     root.querySelector('#wLoad')?.addEventListener('click', load);
     root.querySelector('#wTicker')?.addEventListener('keydown', (e) => { if (e.key === 'Enter') load(); });
 
-    eachNamed(root, (name, value) => { wizard[name] = value; });
+    eachNamed(root, (name, value) => { wizard[name] = value; updatePreview(ctx); });
+    updatePreview(ctx);
 
     root.querySelector('#wBack')?.addEventListener('click', () => { wizard.step = Math.max(0, wizard.step - 1); ctx.reload(); });
     root.querySelector('#wNext')?.addEventListener('click', () => {
@@ -234,6 +277,32 @@ function metrics() {
     delta: wizard.delta === '' ? null : Number(wizard.delta),
     stockPrice: wizard.price,
   });
+}
+
+// Live calculation preview on step 2, updated as the user types.
+function updatePreview(ctx) {
+  const host = document.getElementById('wPreview');
+  if (!host || !wizard || wizard.step !== 1) return;
+  const s = mergeSettings(ctx.state.settings);
+  const m = metrics();
+  const maxColl = ctx.account.budget * s.maxPerWheelPct;
+  if (!m) {
+    host.innerHTML = '<p class="muted" style="font-size:12.5px">Enter a strike and a premium (mid, or bid/ask) to see the live calculation.</p>';
+    return;
+  }
+  const feasible = m.collateral <= maxColl && m.collateral <= ctx.account.availableCash;
+  host.innerHTML = `<div class="next-step ${feasible ? '' : 'warn'}">
+    <b>Live preview</b>
+    <div class="grid grid-3" style="margin-top:8px">
+      <div class="kv"><span>Net premium</span><span>${money(m.netPremium)}</span></div>
+      <div class="kv"><span>Collateral</span><span>${money(m.collateral)}</span></div>
+      <div class="kv"><span>Return</span><span>${pct(m.returnOnCollateral)}</span></div>
+      <div class="kv"><span>Annualized (est.)</span><span>${m.annualized == null ? '—' : pct(m.annualized)}</span></div>
+      <div class="kv"><span>Breakeven</span><span>${money(m.breakeven)}</span></div>
+      <div class="kv"><span>Prob. OTM (est.)</span><span>${m.probabilityOtm == null ? '—' : pct(m.probabilityOtm, 0)}</span></div>
+    </div>
+    <div class="muted" style="font-size:12px;margin-top:6px">${feasible ? 'Within your per-wheel limit and available cash.' : `⚠︎ Exceeds your per-wheel limit (${money(maxColl)}) or your available cash.`}</div>
+  </div>`;
 }
 
 function check(ctx) {

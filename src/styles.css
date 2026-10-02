@@ -235,6 +235,8 @@ small { color: var(--muted); }
 
 .progress { height: 8px; border-radius: 20px; background: var(--panel-2); overflow: hidden; }
 .progress i { display: block; height: 100%; background: linear-gradient(90deg, var(--brand), #4fc79a); border-radius: 20px; }
+.progress.indeterminate i { width: 40%; animation: indeterminate 1.1s ease-in-out infinite; }
+@keyframes indeterminate { 0% { margin-left: -42%; } 100% { margin-left: 102%; } }
 
 /* Live scan console */
 .scan-log {
