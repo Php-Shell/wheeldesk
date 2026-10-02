@@ -27,6 +27,7 @@ const IDEA_GROUPS = {
 const QUICK_SEEDS = ['T', 'VZ', 'PFE', 'KMI', 'F', 'INTC', 'XLF', 'EEM', 'ACHR'];
 const scanState = { running: false, results: [], progress: '', group: '', total: 0, done: 0, log: [] };
 let scanShowAvoid = false;
+let scanExpanded = true;
 
 function draftFor(w) {
   if (!drafts.has(w.symbol)) {
@@ -185,6 +186,7 @@ function scanLogLine(text) {
 
 async function runScan(ctx, symbols, label = '') {
   scanState.running = true;
+  scanExpanded = true;
   scanState.results = [];
   scanState.log = [];
   scanState.total = symbols.length;
@@ -207,7 +209,8 @@ async function runScan(ctx, symbols, label = '') {
       // Finnhub rate limit while scanning many tickers.
       const data = await ctx.providers.loadTickerData(sym, ctx.auth.token(), { slim: true, candlesSource: 'nasdaq' });
       if (data?.quote?.price != null) marks[sym] = data.quote.price;
-      scanLogLine(`  ${sym}: price ${data?.quote?.price != null ? money(data.quote.price) : 'n/a'}, EPS ${data?.metrics?.epsTTMFromQuarters ?? data?.metrics?.epsTTM ?? 'n/a'}, earnings ${data?.earnings?.nextDate ? toDMY(data.earnings.nextDate) : 'unknown'}`);
+      const epsVal = data?.metrics?.epsTTMFromQuarters ?? data?.metrics?.epsTTM;
+      scanLogLine(`  ${sym}: price ${data?.quote?.price != null ? money(data.quote.price) : 'n/a'}, EPS ${epsVal != null ? Number(epsVal).toFixed(2) : 'n/a'}, earnings ${data?.earnings?.nextDate ? toDMY(data.earnings.nextDate) : 'unknown'}`);
       scanState.progress = `Loading ${sym} (${i}/${symbols.length}) — option chain…`;
       paintProgress();
       let option = null;
@@ -625,9 +628,26 @@ export default {
           <span id="scanProgress" class="muted">${escapeHtml(scanState.progress)}${!scanState.progress && scanState.group ? `Last scan: ${escapeHtml(scanState.group)}` : ''}</span>
           <span id="scanCount" class="muted">${scanState.total ? `${scanState.done}/${scanState.total}` : ''}</span>
         </div>
-        <div id="scanLog" class="scan-log">${scanState.log.slice(-18).map((l) => `<div>${escapeHtml(l)}</div>`).join('')}</div>
-        <label class="checkline" style="margin-top:10px"><input type="checkbox" id="scanShowAvoid" ${scanShowAvoid ? 'checked' : ''}/> Show "Avoid" rows too (with reasons)</label>
-        ${scanResultsTable(ctx)}
+        ${(() => {
+          const usable = scanState.results.filter((r) => r.result && r.result.verdict.key !== 'avoid').length;
+          const summary = scanState.running
+            ? `Scanning… ${scanState.done}/${scanState.total}`
+            : `${usable} worth a closer look · ${scanState.results.length} checked`;
+          if (!scanState.results.length && !scanState.running) return '';
+          const open = scanExpanded || scanState.running;
+          return `<div class="accordion ${open ? 'open' : ''}" style="margin-top:12px" id="scanAccordion">
+            <div class="accordion-head" data-scan-toggle>
+              <b>Scan results</b>
+              <span class="muted" style="font-size:12.5px">${escapeHtml(summary)}</span>
+              <span class="chev">›</span>
+            </div>
+            <div class="accordion-body">
+              <div id="scanLog" class="scan-log">${scanState.log.slice(-18).map((l) => `<div>${escapeHtml(l)}</div>`).join('')}</div>
+              <label class="checkline" style="margin-top:10px"><input type="checkbox" id="scanShowAvoid" ${scanShowAvoid ? 'checked' : ''}/> Show "Avoid" rows too (with reasons)</label>
+              ${scanResultsTable(ctx)}
+            </div>
+          </div>`;
+        })()}
       </div>
 
       <div class="section-head"><h2>Watchlist</h2><button class="btn btn-secondary btn-sm" id="screenerReload">↻ Reload all data</button></div>
@@ -653,6 +673,9 @@ export default {
         const g = IDEA_GROUPS[b.dataset.scanGroup];
         if (g) runScan(ctx, g.symbols, g.label);
       });
+    });
+    root.querySelectorAll('[data-scan-toggle]').forEach((head) => {
+      head.onclick = () => { scanExpanded = !scanExpanded; ctx.reload(); };
     });
     const showAvoid = root.querySelector('#scanShowAvoid');
     if (showAvoid) showAvoid.onchange = (e) => { scanShowAvoid = e.target.checked; ctx.reload(); };
