@@ -37,10 +37,18 @@ export const CHECKLIST = [
     return { status: 'fail', detail: `Market cap ${money(mc, 'USD', 0)} is below $2B.` };
   }),
 
-  item('A3', 'A', 'Profitable over the last 12 months', 'A profitable company is less likely to fall sharply on bad news.', (c) => {
-    const eps = toNum(c.metrics?.epsTTM, null);
-    if (eps === null) return { status: 'unknown', detail: 'Trailing EPS unavailable — verify manually.' };
-    return eps > 0 ? { status: 'pass', detail: `Trailing 12-month EPS is ${eps.toFixed(2)}.` } : { status: 'fail', detail: `Trailing 12-month EPS is negative (${eps.toFixed(2)}).` };
+  item('A3', 'A', 'Profitable over the last 12 months', 'Uses diluted earnings per share (EPS) over the trailing 12 months. A profitable company is less likely to fall sharply on bad news.', (c) => {
+    const quarterly = toNum(c.metrics?.epsTTMFromQuarters, null);
+    const vendor = toNum(c.metrics?.epsTTM, null);
+    const eps = quarterly ?? vendor;
+    if (eps === null) return { status: 'unknown', detail: 'Trailing EPS unavailable — enter it manually (Yahoo key-statistics → Diluted EPS (ttm)).' };
+    const source = quarterly != null ? 'sum of the last 4 reported quarters' : 'Finnhub TTM';
+    if (quarterly != null && vendor != null && Math.sign(quarterly) !== Math.sign(vendor)) {
+      return { status: 'warn', detail: `Sources disagree: quarterly TTM EPS ${quarterly.toFixed(2)} vs vendor TTM ${vendor.toFixed(2)} — verify before relying on it.` };
+    }
+    return eps > 0
+      ? { status: 'pass', detail: `Trailing 12-month EPS is ${eps.toFixed(2)} (${source}).` }
+      : { status: 'fail', detail: `Trailing 12-month EPS is negative (${eps.toFixed(2)}, ${source}).` };
   }),
 
   item('A4', 'A', 'Not in a severe downtrend', 'Buying a falling knife increases the chance of staying assigned at a loss.', (c) => {
@@ -82,10 +90,10 @@ export const CHECKLIST = [
     return d >= s.dteMin && d <= s.dteMax ? { status: 'pass', detail: `${d} days to expiry.` } : { status: 'warn', detail: `${d} days to expiry is outside the ${s.dteMin}–${s.dteMax} DTE preference.` };
   }),
 
-  item('B9', 'B', 'Open interest at least 500', 'Higher open interest means easier fills and tighter prices.', (c) => {
+  item('B9', 'B', 'Open interest at least 500', 'Use the Open Interest of the specific PUT contract at YOUR chosen strike (the OI column on that contract row), not the put/call ratio or the Call OI / Put OI totals. Higher OI means easier fills and tighter prices.', (c) => {
     const oi = toNum(c.option?.openInterest, null);
     const s = mergeSettings(c.settings).thresholds;
-    if (oi === null) return { status: 'unknown', detail: 'Open interest unavailable — enter it from IBKR.' };
+    if (oi === null) return { status: 'unknown', detail: 'Open interest unavailable — open the Finviz option chain and read the OI of your exact put strike (ignore the Put/Call OI totals).' };
     if (oi >= s.openInterest) return { status: 'pass', detail: `Open interest ${oi}.` };
     if (oi >= s.openInterestWarn) return { status: 'warn', detail: `Open interest ${oi} is between 100 and 500.` };
     return { status: 'fail', detail: `Open interest ${oi} is below 100.` };
@@ -95,7 +103,7 @@ export const CHECKLIST = [
     const bid = toNum(c.option?.bid, null);
     const ask = toNum(c.option?.ask, null);
     const s = mergeSettings(c.settings).thresholds;
-    if (bid === null || ask === null || bid <= 0 || ask <= 0) return { status: 'unknown', detail: 'Bid and ask unavailable — enter them manually.' };
+    if (bid === null || ask === null || bid <= 0 || ask <= 0) return { status: 'unknown', detail: 'Bid and ask unavailable — read the bid/ask of your exact contract (Finviz option chain) and enter them in the strike row.' };
     const spread = ask - bid;
     const mid = (ask + bid) / 2;
     const pctOfMid = mid > 0 ? spread / mid : Infinity;
@@ -106,7 +114,7 @@ export const CHECKLIST = [
   item('C11', 'C', 'Strike delta between 0.15 and 0.30', 'Lower delta = higher probability of keeping the premium.', (c) => {
     const delta = toNum(c.option?.delta, null);
     const s = mergeSettings(c.settings);
-    if (delta === null) return { status: 'unknown', detail: 'Delta unavailable — enter it from IBKR.' };
+    if (delta === null) return { status: 'unknown', detail: 'Delta unavailable — read the delta of your exact contract (Finviz option chain has a Delta column) or enter it from IBKR.' };
     const abs = Math.abs(delta);
     if (abs >= s.deltaMin && abs <= s.deltaMax) return { status: 'pass', detail: `Delta ${abs.toFixed(2)}.` };
     if (abs < s.deltaMin) return { status: 'warn', detail: `Delta ${abs.toFixed(2)} is more conservative than the target band.` };
@@ -121,8 +129,8 @@ export const CHECKLIST = [
       return {
         status: 'unknown',
         detail: iv !== null
-          ? `Implied volatility is ${iv.toFixed(1)}%. IV Rank is not available from free data — enter it manually if you have it.`
-          : 'IV Rank unavailable — enter it manually if you have it.',
+          ? `Implied volatility is ${iv.toFixed(1)}%. IV Rank is not on Yahoo — read it from the MarketChameleon link or enter it manually.`
+          : 'IV Rank unavailable — read it from the MarketChameleon link (not Yahoo) or enter it manually.',
       };
     }
     if (ivRank >= s.ivMin && ivRank <= s.ivMax) return { status: 'pass', detail: `IV Rank ${ivRank}.` };
@@ -191,10 +199,10 @@ export const ITEM_LINKS = {
   A5: (s) => `${yahoo(s)}/key-statistics`,
   A6: (s) => `https://finviz.com/quote.ashx?t=${encodeURIComponent(s)}`,
   B8: (s) => `${yahoo(s)}/options`,
-  B9: (s) => `${yahoo(s)}/options`,
-  B10: (s) => `${yahoo(s)}/options`,
-  C11: (s) => `${yahoo(s)}/options`,
-  C12: (s) => `${yahoo(s)}/options`,
+  B9: (s) => `https://finviz.com/quote.ashx?t=${encodeURIComponent(s)}&ty=oc`,
+  B10: (s) => `https://finviz.com/quote.ashx?t=${encodeURIComponent(s)}&ty=oc`,
+  C11: (s) => `https://finviz.com/quote.ashx?t=${encodeURIComponent(s)}&ty=oc`,
+  C12: (s) => `https://marketchameleon.com/Overview/${encodeURIComponent(s)}/IV/`,
   C14: (s) => `https://www.nasdaq.com/market-activity/stocks/${encodeURIComponent(s.toLowerCase())}/earnings`,
   C15: (s) => `https://www.nasdaq.com/market-activity/stocks/${encodeURIComponent(s.toLowerCase())}/dividend-history`,
 };
@@ -299,7 +307,12 @@ export function buildChecklistContext({ state, data, option, manual, settings })
   const profile = { ...(data?.profile || {}) };
   if (has(m.marketCap)) profile.marketCap = toNum(m.marketCap, profile.marketCap);
   const marketMetrics = { ...(data?.metrics || {}) };
-  if (has(m.epsTTM)) marketMetrics.epsTTM = toNum(m.epsTTM, marketMetrics.epsTTM);
+  if (has(m.epsTTM)) {
+    const v = toNum(m.epsTTM, null);
+    // A manual EPS overrides both the vendor TTM and the quarterly sum.
+    marketMetrics.epsTTM = v;
+    marketMetrics.epsTTMFromQuarters = v;
+  }
   if (has(m.avgVolume)) marketMetrics.avgVolume = toNum(m.avgVolume, marketMetrics.avgVolume);
 
   const earnings = { ...(data?.earnings || {}) };

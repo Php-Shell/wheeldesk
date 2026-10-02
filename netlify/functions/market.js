@@ -97,6 +97,36 @@ async function nasdaqHistorical(symbol) {
   return null;
 }
 
+// Consolidated (OPRA) put open interest by expiry|strike from Nasdaq, used to
+// top up CBOE's exchange-only open interest.
+function osiFromDrilldown(url) {
+  const m = /([a-z]+)-+(\d{6})([cp])(\d{8})$/i.exec(String(url || ''));
+  if (!m) return null;
+  return { expiry: `20${m[2].slice(0, 2)}-${m[2].slice(2, 4)}-${m[2].slice(4, 6)}`, type: m[3].toLowerCase(), strike: Number(m[4]) / 1000 };
+}
+
+async function nasdaqOptionOi(symbol) {
+  const from = new Date(Date.now() - 90 * 86400000).toISOString().slice(0, 10);
+  const to = new Date(Date.now() + 400 * 86400000).toISOString().slice(0, 10);
+  for (const assetclass of ['stocks', 'etf']) {
+    try {
+      const j = await nasdaqFetch(`/quote/${encodeURIComponent(symbol)}/option-chain?assetclass=${assetclass}&limit=5000&fromdate=${from}&todate=${to}&excode=oprac&callput=put&money=all&type=all`);
+      const rows = j?.data?.table?.rows || [];
+      if (!rows.length) continue;
+      const map = new Map();
+      for (const r of rows) {
+        const o = osiFromDrilldown(r.drillDownURL);
+        if (!o || o.type !== 'put') continue;
+        const oi = Number(String(r.p_Openinterest).replace(/[^0-9]/g, '')) || 0;
+        const key = `${o.expiry}|${o.strike}`;
+        if (oi > (map.get(key) || 0)) map.set(key, oi);
+      }
+      if (map.size) return map;
+    } catch { /* try next asset class */ }
+  }
+  return null;
+}
+
 async function nasdaqDividends(symbol) {
   for (const assetclass of ['stocks', 'etf']) {
     try {
@@ -217,12 +247,17 @@ async function getEarnings(symbol) {
     .sort((a, b) => String(a.date).localeCompare(String(b.date)));
   const nextDate = upcoming[0]?.date || null;
   const daysUntil = nextDate ? Math.ceil((new Date(nextDate).getTime() - Date.now()) / 86400000) : null;
+  // Trailing-twelve-month EPS computed from the last four reported quarters.
+  // This is often more faithful than a vendor's single epsTTM number.
+  const quarters = past.filter((p) => p.actual != null).slice(0, 4);
+  const epsTTMFromQuarters = quarters.length === 4 ? quarters.reduce((a, p) => a + Number(p.actual), 0) : null;
   if (!nextDate && !past.length) return unavailable('earnings', symbol, 'No earnings dates returned.', 'finnhub');
   return ok('earnings', symbol, 'finnhub', {
     nextDate,
     daysUntil,
     hour: upcoming[0]?.hour || null,
     epsEstimate: upcoming[0]?.epsEstimate ?? null,
+    epsTTMFromQuarters,
     past: past.map((p) => ({ period: p.period, actual: p.actual, estimate: p.estimate, surprisePercent: p.surprisePercent })),
   });
 }
@@ -253,19 +288,23 @@ async function getDividends(symbol) {
   return unavailable('dividends', symbol, 'No dividend data found. The company may not pay a dividend — verify manually.', null);
 }
 
-async function getCandles(symbol) {
+async function getCandles(symbol, source) {
   let provider = 'finnhub';
   let closes = [];
   let volumes = [];
-  try {
-    const to = Math.floor(Date.now() / 1000);
-    const from = to - 420 * 86400;
-    const x = await finnhub('/stock/candle', { symbol, resolution: 'D', from, to });
-    if (x?.s === 'ok' && Array.isArray(x.c) && x.c.length >= 30) {
-      closes = x.c;
-      volumes = x.v || [];
-    }
-  } catch { /* fall through */ }
+  // source=nasdaq lets the screener scan skip the (free-plan-blocked) Finnhub
+  // candle call to stay inside the rate limit.
+  if (source !== 'nasdaq') {
+    try {
+      const to = Math.floor(Date.now() / 1000);
+      const from = to - 420 * 86400;
+      const x = await finnhub('/stock/candle', { symbol, resolution: 'D', from, to });
+      if (x?.s === 'ok' && Array.isArray(x.c) && x.c.length >= 30) {
+        closes = x.c;
+        volumes = x.v || [];
+      }
+    } catch { /* fall through */ }
+  }
 
   if (!closes.length) {
     const n = await nasdaqHistorical(symbol).catch(() => null);
@@ -347,6 +386,18 @@ async function getCboeChain(symbol) {
     });
   }
   if (!rows.length) return unavailable('options', symbol, 'CBOE chain could not be parsed.', 'cboe');
+  // Merge consolidated OI from Nasdaq: CBOE only reports its own exchange's OI,
+  // which understates heavily NYSE/ARCA-traded names.
+  try {
+    const oiMap = await nasdaqOptionOi(symbol);
+    if (oiMap) {
+      for (const row of rows) {
+        const key = `${row.expiry}|${row.strike}`;
+        const alt = oiMap.get(key);
+        if (alt != null && (row.openInterest == null || alt > row.openInterest)) row.openInterest = alt;
+      }
+    }
+  } catch { /* keep CBOE OI */ }
   return ok('options', symbol, 'cboe', {
     underlying: {
       price: x?.data?.current_price ?? null,
@@ -570,7 +621,7 @@ export default async (req) => {
       case 'metrics': body = await getMetrics(rawSymbol); break;
       case 'earnings': body = await getEarnings(rawSymbol); break;
       case 'dividends': body = await getDividends(rawSymbol); break;
-      case 'candles': body = await getCandles(rawSymbol); break;
+      case 'candles': body = await getCandles(rawSymbol, url.searchParams.get('source') || ''); break;
       case 'options': body = await getOptions(rawSymbol, expiry); break;
       case 'search': body = await search(query); break;
       default: return json({ status: 'error', message: 'Unknown kind.' }, 400);

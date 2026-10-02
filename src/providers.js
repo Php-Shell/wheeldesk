@@ -62,17 +62,19 @@ export function clearCache() {
   memory.clear();
 }
 
-export async function loadTickerData(symbol, token) {
+export async function loadTickerData(symbol, token, opts = {}) {
   const s = String(symbol || '').toUpperCase();
   if (!s) return null;
-  return cached(`ticker:${s}:${token ? 'auth' : 'anon'}`, async () => {
+  const slim = Boolean(opts.slim);
+  return cached(`ticker:${s}:${slim ? 'slim' : 'full'}:${token ? 'auth' : 'anon'}`, async () => {
+    const candlesParams = { symbol: s, ...(opts.candlesSource ? { source: opts.candlesSource } : {}) };
     const [quote, profile, metrics, earnings, dividends, candles] = await Promise.all([
       call('quote', { symbol: s }, token),
       call('profile', { symbol: s }, token),
       call('metrics', { symbol: s }, token),
       call('earnings', { symbol: s }, token),
-      call('dividends', { symbol: s }, token),
-      call('candles', { symbol: s }, token),
+      slim ? Promise.resolve(null) : call('dividends', { symbol: s }, token),
+      call('candles', candlesParams, token),
     ]);
 
     const sources = [];
@@ -129,6 +131,7 @@ export async function loadTickerData(symbol, token) {
       },
       metrics: {
         epsTTM: m.epsTTM ?? null,
+        epsTTMFromQuarters: e.epsTTMFromQuarters ?? null,
         avgVolume,
         high52: m.high52 ?? null,
         low52: m.low52 ?? null,

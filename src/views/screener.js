@@ -8,8 +8,24 @@ const drafts = new Map();
 const requested = new Set();
 const chains = new Map();
 const chainLoading = new Set();
-const SEEDS = ['T', 'VZ', 'PFE', 'BAC', 'KO', 'KMI', 'CSCO', 'F', 'XLF'];
-const scanState = { running: false, results: [], progress: '' };
+// Curated, generally affordable and liquid ideas. The scan still checks each
+// one live (price, profitability, earnings, greeks) and ranks what fits.
+const IDEA_GROUPS = {
+  income: {
+    label: 'Safe income ideas',
+    symbols: ['T', 'VZ', 'PFE', 'KMI', 'F', 'INTC', 'KHC', 'VFC', 'USB', 'FITB', 'KEY', 'HBAN'],
+  },
+  etf: {
+    label: 'ETFs',
+    symbols: ['XLF', 'KRE', 'KBE', 'EEM', 'EWZ', 'FXI', 'VWO', 'SLV', 'GDX', 'ARKK', 'KWEB', 'XOP'],
+  },
+  speculative: {
+    label: 'Cheaper / higher risk',
+    symbols: ['ACHR', 'SOFI', 'RIVN', 'LCID', 'NIO', 'SNAP', 'WBD', 'VTRS', 'XRX', 'NWL', 'APA', 'WBA'],
+  },
+};
+const QUICK_SEEDS = ['T', 'VZ', 'PFE', 'KMI', 'F', 'INTC', 'XLF', 'EEM', 'ACHR'];
+const scanState = { running: false, results: [], progress: '', group: '' };
 
 function draftFor(w) {
   if (!drafts.has(w.symbol)) {
@@ -56,14 +72,29 @@ function activeOption(w, draft) {
   };
 }
 
-// Pick the listed expiry closest to a 40-DTE target (the strategy's sweet spot).
-function pickExpiry(expirations) {
+// Pick an expiry in the 25–60 DTE window, preferring the most liquid one
+// (highest put open interest) with a tie-break near 40 DTE. Thin weeklies can
+// otherwise make open-interest checks fail for no good reason.
+function pickExpiry(expirations, rows) {
   const scored = expirations
     .map((e) => ({ e, d: dte(e) }))
     .filter((x) => x.d != null && x.d > 0);
   if (!scored.length) return expirations[0] || '';
-  const preferred = scored.filter((x) => x.d >= 25 && x.d <= 55);
+  const preferred = scored.filter((x) => x.d >= 25 && x.d <= 60);
   const pool = preferred.length ? preferred : scored;
+  if (Array.isArray(rows) && rows.length) {
+    const oiByExp = new Map();
+    for (const r of rows) {
+      if (r.type !== 'put' || r.delta == null) continue;
+      const a = Math.abs(r.delta);
+      if (a < 0.05 || a > 0.6) continue;
+      oiByExp.set(r.expiry, (oiByExp.get(r.expiry) || 0) + (Number(r.openInterest) || 0));
+    }
+    if ([...oiByExp.values()].some((v) => v > 0)) {
+      pool.sort((a, b) => (oiByExp.get(b.e) || 0) - (oiByExp.get(a.e) || 0) || Math.abs(a.d - 40) - Math.abs(b.d - 40));
+      return pool[0].e;
+    }
+  }
   pool.sort((a, b) => Math.abs(a.d - 40) - Math.abs(b.d - 40));
   return pool[0].e;
 }
@@ -75,15 +106,17 @@ function populateFromChain(sym, ctx, expiry) {
   if (!chain || !draft) return;
   const s = mergeSettings(ctx.state.settings);
   const maxCollateral = ctx.account.budget * s.maxPerWheelPct;
-  const puts = chain.rows
+  const base = chain.rows
     .filter((r) => r.type === 'put' && r.expiry === expiry)
     .filter((r) => r.strike && (r.bid > 0 || r.mid > 0))
     .filter((r) => r.delta !== null && Math.abs(r.delta) >= 0.08 && Math.abs(r.delta) <= 0.4)
-    .filter((r) => r.strike * 100 <= maxCollateral)
+    .filter((r) => r.strike * 100 <= maxCollateral);
+  const withOi = base.filter((r) => (Number(r.openInterest) || 0) > 0);
+  const ranked = (withOi.length ? withOi : base)
     .sort((a, b) => Math.abs(Math.abs(a.delta) - 0.22) - Math.abs(Math.abs(b.delta) - 0.22))
     .slice(0, 8)
     .sort((a, b) => b.strike - a.strike);
-  const rows = puts.length ? puts : chain.rows.filter((r) => r.type === 'put' && r.expiry === expiry).slice(0, 6);
+  const rows = ranked.length ? ranked : chain.rows.filter((r) => r.type === 'put' && r.expiry === expiry).slice(0, 6);
   draft.expiry = expiry;
   draft.candidates = rows.map((r) => ({
     strike: r.strike,
@@ -106,7 +139,7 @@ async function fetchChain(sym, ctx) {
     if (res?.status === 'ok' && res.data?.rows?.length) {
       chains.set(sym, res.data);
       if (res.data.underlying?.price != null) ctx.actions.setMark(sym, res.data.underlying.price);
-      populateFromChain(sym, ctx, pickExpiry(res.data.expirations));
+      populateFromChain(sym, ctx, pickExpiry(res.data.expirations, res.data.rows));
       toast(`${sym}: loaded ${res.data.rows.length} contracts from ${res.provider} (delayed).`);
     } else {
       toast(res?.message || `No chain available for ${sym} — enter strikes manually.`, 'warn');
@@ -124,7 +157,8 @@ function bestPut(chain, expiry, ctx) {
   const s = mergeSettings(ctx.state.settings);
   const maxColl = ctx.account.budget * s.maxPerWheelPct;
   const puts = chain.rows.filter((r) => r.type === 'put' && r.expiry === expiry && r.strike && (r.bid > 0 || r.mid > 0) && r.delta != null && r.strike * 100 <= maxColl);
-  const pool = puts.length ? puts : chain.rows.filter((r) => r.type === 'put' && r.expiry === expiry && r.delta != null && r.strike);
+  const withOi = puts.filter((r) => (Number(r.openInterest) || 0) > 0);
+  const pool = withOi.length ? withOi : puts.length ? puts : chain.rows.filter((r) => r.type === 'put' && r.expiry === expiry && r.delta != null && r.strike);
   if (!pool.length) return null;
   pool.sort((a, b) => Math.abs(Math.abs(a.delta) - 0.22) - Math.abs(Math.abs(b.delta) - 0.22));
   const r = pool[0];
@@ -135,23 +169,28 @@ function scanScore(result) {
   return result.passCount * 2 - result.failCount * 3 - result.criticalFails.length * 10 - result.unknownCount * 0.3;
 }
 
-async function runScan(ctx, symbols) {
+async function runScan(ctx, symbols, label = '') {
   scanState.running = true;
   scanState.results = [];
   scanState.progress = '';
+  scanState.group = label;
   const marks = {};
+  let i = 0;
   for (const sym of symbols) {
-    scanState.progress = `Loading ${sym}…`;
+    i += 1;
+    scanState.progress = `Loading ${sym}… (${i}/${symbols.length})`;
     paintProgress();
     try {
-      const data = await ctx.providers.loadTickerData(sym, ctx.auth.token());
+      // Slim fetch (skip dividends, Nasdaq candles) keeps us inside the free
+      // Finnhub rate limit while scanning many tickers.
+      const data = await ctx.providers.loadTickerData(sym, ctx.auth.token(), { slim: true, candlesSource: 'nasdaq' });
       if (data?.quote?.price != null) marks[sym] = data.quote.price;
       let option = null;
       let provider = null;
       const optRes = await ctx.providers.loadOptions(sym, '', ctx.auth.token());
       if (optRes?.status === 'ok' && optRes.data?.rows?.length) {
         provider = optRes.provider;
-        option = bestPut(optRes.data, pickExpiry(optRes.data.expirations), ctx);
+        option = bestPut(optRes.data, pickExpiry(optRes.data.expirations, optRes.data.rows), ctx);
         if (option) option.provider = provider;
       }
       const context = buildChecklistContext({ state: ctx.state, data, option, manual: {}, settings: ctx.state.settings });
@@ -160,6 +199,7 @@ async function runScan(ctx, symbols) {
     } catch (err) {
       scanState.results.push({ sym, error: err.message, result: null, score: -999 });
     }
+    await new Promise((r) => setTimeout(r, 400));
   }
   if (Object.keys(marks).length) ctx.actions.setMarks(marks);
   scanState.results.sort((a, b) => b.score - a.score);
@@ -409,7 +449,7 @@ function watchBody(w, ctx) {
     <div class="grid grid-3">
       ${manualField(w.symbol, 'price', 'Price', 'A1', links.quote, draft, '61.20')}
       ${manualField(w.symbol, 'marketCap', 'Market cap ($)', 'A2', links.stats, draft, '260000000000')}
-      ${manualField(w.symbol, 'epsTTM', 'Trailing EPS', 'A3', links.stats, draft, '2.40')}
+      ${manualField(w.symbol, 'epsTTM', 'TTM EPS (diluted)', 'A3', links.stats, draft, '2.40')}
       ${manualField(w.symbol, 'priceVsMa200', 'Price vs 200-DMA (%)', 'A4', links.chart, draft, '+3.5 or -6')}
       ${manualField(w.symbol, 'avgVolume', 'Average daily volume', 'A5', links.stats, draft, '14000000')}
       ${manualField(w.symbol, 'ivRank', 'IV Rank (0–100)', 'C12', links.options, draft, '45')}
@@ -505,19 +545,19 @@ export default {
           <input id="screenerInput" placeholder="Ticker (e.g. KO)" style="max-width:220px" />
           <button class="btn btn-primary" id="screenerAdd">Add / load</button>
           <span class="muted" style="font-size:12px">Starting ideas (must pass the checklist with live data):</span>
-          <span class="chip-row">${SEEDS.map((s) => `<button class="chip" data-seed="${s}">${s}</button>`).join('')}</span>
+          <span class="chip-row">${QUICK_SEEDS.map((s) => `<button class="chip" data-seed="${s}">${s}</button>`).join('')}</span>
         </div>
       </div>
 
       <div class="card mt">
         <div class="card-head">
-          <div><h3>Auto-scan &amp; rank</h3><p class="muted">Loads live data and free option chains for every ticker, scores each against the checklist, and ranks the best puts to sell. Confirm the manual items before trading.</p></div>
-          <div class="row" style="gap:8px">
-            <button class="btn btn-primary" id="scanIdeas" ${scanState.running ? 'disabled' : ''}>⚡ Scan safe ideas</button>
-            <button class="btn btn-secondary" id="scanWatch" ${scanState.running ? 'disabled' : ''}>Scan my watchlist</button>
+          <div><h3>Auto-scan &amp; rank</h3><p class="muted">Loads live data and free option chains for every ticker, scores each against the checklist, and ranks the best puts to sell. Only affordable names score well. Confirm the manual items before trading.</p></div>
+          <div class="row wrap" style="gap:8px">
+            ${Object.entries(IDEA_GROUPS).map(([key, g]) => `<button class="btn btn-secondary btn-sm" data-scan-group="${key}" ${scanState.running ? 'disabled' : ''}>${escapeHtml(g.label)}</button>`).join('')}
+            <button class="btn btn-primary btn-sm" id="scanWatch" ${scanState.running ? 'disabled' : ''}>Scan my watchlist</button>
           </div>
         </div>
-        <div id="scanProgress" class="muted" style="font-size:12.5px">${escapeHtml(scanState.progress)}</div>
+        <div id="scanProgress" class="muted" style="font-size:12.5px">${escapeHtml(scanState.progress)}${scanState.group && !scanState.running ? ` · last scan: ${escapeHtml(scanState.group)}` : ''}</div>
         ${scanResultsTable(ctx)}
       </div>
 
@@ -539,11 +579,16 @@ export default {
     root.querySelectorAll('[data-seed]').forEach((b) => (b.onclick = () => add(b.dataset.seed)));
     root.querySelector('#screenerReload')?.addEventListener('click', () => { requested.clear(); loadAll(ctx); });
 
-    root.querySelector('#scanIdeas')?.addEventListener('click', () => runScan(ctx, SEEDS));
+    root.querySelectorAll('[data-scan-group]').forEach((b) => {
+      b.addEventListener('click', () => {
+        const g = IDEA_GROUPS[b.dataset.scanGroup];
+        if (g) runScan(ctx, g.symbols, g.label);
+      });
+    });
     root.querySelector('#scanWatch')?.addEventListener('click', () => {
       const watch = ctx.state.watchlist.map((w) => w.symbol);
-      if (!watch.length) { toast('Your watchlist is empty — scanning the safe ideas instead.', 'warn'); runScan(ctx, SEEDS); return; }
-      runScan(ctx, [...new Set(watch)]);
+      if (!watch.length) { toast('Your watchlist is empty — scanning the safe income ideas instead.', 'warn'); runScan(ctx, IDEA_GROUPS.income.symbols, IDEA_GROUPS.income.label); return; }
+      runScan(ctx, [...new Set(watch)], 'My watchlist');
     });
     root.querySelectorAll('[data-scan-open]').forEach((b) => {
       b.onclick = () => {
