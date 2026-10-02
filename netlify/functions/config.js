@@ -8,6 +8,7 @@ export default async () =>
       supabaseAnonKey: process.env.SUPABASE_ANON_KEY || '',
       providers: {
         finnhub: Boolean(process.env.FINNHUB_API_KEY),
+        cboe: true,
         tradier: Boolean(process.env.TRADIER_API_KEY),
       },
     }),

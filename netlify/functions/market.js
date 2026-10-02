@@ -150,10 +150,70 @@ async function getCandles(symbol) {
   });
 }
 
-async function getOptions(symbol, expiry) {
-  if (!process.env.TRADIER_API_KEY) {
-    return unavailable('options', symbol, 'Options chains with greeks need a Tradier developer key (TRADIER_API_KEY). Enter the strike, bid/ask and delta manually from IBKR.', null);
+// CBOE publishes free delayed option chains that already include greeks,
+// implied volatility, open interest and volume. No key or signup required.
+function parseOsi(osi) {
+  // CBOE returns ROOT + YYMMDD + C/P + strike*1000 (8 digits). The root is not
+  // padded, so read the fixed 15-character suffix from the end.
+  if (typeof osi !== 'string' || osi.length < 16) return null;
+  const ymd = osi.slice(-15, -9);
+  const cp = osi[osi.length - 9];
+  const strikeRaw = osi.slice(-8);
+  if (!/^\d{6}$/.test(ymd) || (cp !== 'C' && cp !== 'P') || !/^\d{8}$/.test(strikeRaw)) return null;
+  const yy = ymd.slice(0, 2);
+  const mm = ymd.slice(2, 4);
+  const dd = ymd.slice(4, 6);
+  return { expiry: `20${yy}-${mm}-${dd}`, type: cp === 'C' ? 'call' : 'put', strike: Number(strikeRaw) / 1000 };
+}
+
+async function getCboeChain(symbol) {
+  const url = `https://cdn.cboe.com/api/global/delayed_quotes/options/${encodeURIComponent(symbol)}.json`;
+  const r = await fetch(url, {
+    redirect: 'follow',
+    headers: { 'User-Agent': 'Mozilla/5.0 (compatible; WheelDesk/2.0)', Accept: 'application/json' },
+  });
+  if (r.status === 404) return unavailable('options', symbol, `CBOE does not list options for ${symbol}.`, 'cboe');
+  if (!r.ok) throw new Error(`CBOE ${r.status}`);
+  const x = await r.json();
+  const list = x?.data?.options;
+  if (!Array.isArray(list) || !list.length) return unavailable('options', symbol, `No CBOE chain returned for ${symbol}.`, 'cboe');
+  const rows = [];
+  for (const o of list) {
+    const parsed = parseOsi(o.option);
+    if (!parsed) continue;
+    const bid = o.bid ?? null;
+    const ask = o.ask ?? null;
+    rows.push({
+      ...parsed,
+      bid,
+      ask,
+      mid: bid != null && ask != null && (bid > 0 || ask > 0) ? (bid + ask) / 2 : null,
+      last: o.last_trade_price ?? null,
+      volume: o.volume ?? null,
+      openInterest: o.open_interest ?? null,
+      delta: o.delta ?? null,
+      gamma: o.gamma ?? null,
+      theta: o.theta ?? null,
+      vega: o.vega ?? null,
+      iv: o.iv != null ? o.iv * 100 : null,
+    });
   }
+  if (!rows.length) return unavailable('options', symbol, 'CBOE chain could not be parsed.', 'cboe');
+  return ok('options', symbol, 'cboe', {
+    underlying: {
+      price: x?.data?.current_price ?? null,
+      change: x?.data?.price_change ?? null,
+      percent: x?.data?.price_change_percent ?? null,
+      iv30: x?.data?.iv30 ?? null,
+      asOf: x?.timestamp ?? null,
+    },
+    expirations: [...new Set(rows.map((r) => r.expiry))].sort(),
+    rows,
+  });
+}
+
+async function getTradierOptions(symbol, expiry) {
+  if (!process.env.TRADIER_API_KEY) return unavailable('options', symbol, 'Tradier is not configured.', null);
   const base = process.env.TRADIER_BASE_URL || 'https://api.tradier.com';
   const url = new URL(`${base}/v1/markets/options/chains`);
   url.searchParams.set('symbol', symbol);
@@ -178,9 +238,28 @@ async function getOptions(symbol, expiry) {
     gamma: o.greeks?.gamma ?? null,
     theta: o.greeks?.theta ?? null,
     vega: o.greeks?.vega ?? null,
-    iv: o.greeks?.mid_iv ?? null,
+    iv: o.greeks?.mid_iv != null ? o.greeks.mid_iv * 100 : null,
   }));
   return ok('options', symbol, 'tradier', { expirations: [...new Set(rows.map((r) => r.expiry))].sort(), rows });
+}
+
+// Prefer CBOE (free, no signup, includes greeks). Fall back to Tradier if a
+// key is configured, then to an honest "unavailable" so the UI offers manual entry.
+async function getOptions(symbol, expiry) {
+  let primary = null;
+  try {
+    primary = await getCboeChain(symbol);
+  } catch (err) {
+    primary = unavailable('options', symbol, `CBOE request failed (${err.message}).`, 'cboe');
+  }
+  if (primary.status === 'ok') return primary;
+  if (process.env.TRADIER_API_KEY) {
+    try {
+      const tradier = await getTradierOptions(symbol, expiry);
+      if (tradier.status === 'ok') return tradier;
+    } catch { /* fall through to CBOE message */ }
+  }
+  return primary;
 }
 
 async function search(query) {

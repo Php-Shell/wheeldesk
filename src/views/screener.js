@@ -6,12 +6,14 @@ import { badge, tip, toast, chartColors } from '../ui.js';
 const openSet = new Set();
 const drafts = new Map();
 const requested = new Set();
+const chains = new Map();
+const chainLoading = new Set();
 
 function draftFor(w) {
   if (!drafts.has(w.symbol)) {
     drafts.set(w.symbol, {
       expiry: w.option?.expiry || '',
-      candidates: w.candidates?.length ? w.candidates : [{ strike: '', bid: '', ask: '', delta: '', oi: '', volume: '', ivRank: '' }],
+      candidates: w.candidates?.length ? w.candidates : [{ strike: '', bid: '', ask: '', delta: '', oi: '', volume: '', ivRank: '', iv: '' }],
       active: w.activeCandidate ?? 0,
       happyToOwn: w.manual?.happyToOwn ?? '',
       notMeme: w.manual?.notMeme ?? '',
@@ -38,9 +40,72 @@ function activeOption(w, draft) {
     openInterest: row.oi === '' ? null : Number(row.oi),
     volume: row.volume === '' ? null : Number(row.volume),
     ivRank: (row.ivRank !== '' ? Number(row.ivRank) : draft.ivRank === '' ? null : Number(draft.ivRank)),
+    iv: row.iv === '' || row.iv === undefined ? null : Number(row.iv),
     expiry: draft.expiry || null,
     dte: draft.expiry ? dte(draft.expiry) : null,
   };
+}
+
+// Pick the listed expiry closest to a 40-DTE target (the strategy's sweet spot).
+function pickExpiry(expirations) {
+  const scored = expirations
+    .map((e) => ({ e, d: dte(e) }))
+    .filter((x) => x.d != null && x.d > 0);
+  if (!scored.length) return expirations[0] || '';
+  const preferred = scored.filter((x) => x.d >= 25 && x.d <= 55);
+  const pool = preferred.length ? preferred : scored;
+  pool.sort((a, b) => Math.abs(a.d - 40) - Math.abs(b.d - 40));
+  return pool[0].e;
+}
+
+// Fill the strike picker with real puts from the fetched chain.
+function populateFromChain(sym, ctx, expiry) {
+  const chain = chains.get(sym);
+  const draft = drafts.get(sym);
+  if (!chain || !draft) return;
+  const s = mergeSettings(ctx.state.settings);
+  const maxCollateral = ctx.account.budget * s.maxPerWheelPct;
+  const puts = chain.rows
+    .filter((r) => r.type === 'put' && r.expiry === expiry)
+    .filter((r) => r.strike && (r.bid > 0 || r.mid > 0))
+    .filter((r) => r.delta !== null && Math.abs(r.delta) >= 0.08 && Math.abs(r.delta) <= 0.4)
+    .filter((r) => r.strike * 100 <= maxCollateral)
+    .sort((a, b) => Math.abs(Math.abs(a.delta) - 0.22) - Math.abs(Math.abs(b.delta) - 0.22))
+    .slice(0, 8)
+    .sort((a, b) => b.strike - a.strike);
+  const rows = puts.length ? puts : chain.rows.filter((r) => r.type === 'put' && r.expiry === expiry).slice(0, 6);
+  draft.expiry = expiry;
+  draft.candidates = rows.map((r) => ({
+    strike: r.strike,
+    bid: r.bid ?? '',
+    ask: r.ask ?? '',
+    delta: r.delta ?? '',
+    oi: r.openInterest ?? '',
+    volume: r.volume ?? '',
+    ivRank: '',
+    iv: r.iv ?? '',
+  }));
+  draft.active = 0;
+}
+
+async function fetchChain(sym, ctx) {
+  chainLoading.add(sym);
+  ctx.reload();
+  try {
+    const res = await ctx.providers.loadOptions(sym, '', ctx.auth.token());
+    if (res?.status === 'ok' && res.data?.rows?.length) {
+      chains.set(sym, res.data);
+      if (res.data.underlying?.price != null) ctx.actions.setMark(sym, res.data.underlying.price);
+      populateFromChain(sym, ctx, pickExpiry(res.data.expirations));
+      toast(`${sym}: loaded ${res.data.rows.length} contracts from ${res.provider} (delayed).`);
+    } else {
+      toast(res?.message || `No chain available for ${sym} — enter strikes manually.`, 'warn');
+    }
+  } catch (err) {
+    toast(`Chain fetch failed: ${err.message}`, 'error');
+  }
+  chainLoading.delete(sym);
+  ctx.reload();
 }
 
 function checklistHtml(w, ctx) {
@@ -99,6 +164,7 @@ function candidateRows(w, draft) {
       <td><input class="input-sm" style="width:70px" data-cand="${w.symbol}" data-i="${i}" data-k="oi" value="${escapeHtml(row.oi)}" placeholder="500" /></td>
       <td><input class="input-sm" style="width:70px" data-cand="${w.symbol}" data-i="${i}" data-k="volume" value="${escapeHtml(row.volume)}" placeholder="120" /></td>
       <td><input class="input-sm" style="width:60px" data-cand="${w.symbol}" data-i="${i}" data-k="ivRank" value="${escapeHtml(row.ivRank)}" placeholder="45" /></td>
+      <td class="num muted" title="Implied volatility (from the chain)">${row.iv ? `${Number(row.iv).toFixed(1)}%` : '—'}</td>
       <td style="white-space:nowrap">
         <button class="btn btn-${draft.active === i ? 'primary' : 'secondary'} btn-sm" data-use="${w.symbol}" data-i="${i}">${draft.active === i ? 'Selected' : 'Use'}</button>
         <button class="btn btn-ghost btn-sm" data-remove-row="${w.symbol}" data-i="${i}" title="Remove row">×</button>
@@ -153,14 +219,27 @@ function watchBody(w, ctx) {
         <input data-manual="${w.symbol}" data-k="trendOverride" value="${escapeHtml(draft.trendOverride)}" placeholder="e.g. long-term uptrend intact" /></div>
     </div>
 
-    <div class="card-head" style="margin-top:14px"><h4>${tip('Strike picker', 'Enter candidate puts from your IBKR option chain. Free data cannot reliably provide option greeks, so manual entry is expected.')}</h4>
-      <span class="muted" style="font-size:12px">Manual (IBKR)${ctx.globalConfig?.providers?.tradier ? ' · Tradier chain can be added later' : ''}</span></div>
+    <div class="card-head" style="margin-top:14px"><h4>${tip('Strike picker', 'Load a free delayed CBOE option chain (with greeks), or type values from your IBKR screen.')}</h4>
+      <div class="row" style="gap:8px">
+        <button class="btn btn-primary btn-sm" data-fetch-chain="${w.symbol}" ${chainLoading.has(w.symbol) ? 'disabled' : ''}>${chainLoading.has(w.symbol) ? 'Loading…' : '⤓ Load CBOE chain (greeks)'}</button>
+      </div>
+    </div>
+    ${(() => {
+      const chain = chains.get(w.symbol);
+      if (!chain) return '<p class="muted" style="font-size:12px">Free delayed chain from CBOE — no signup. If your symbol is not listed, enter values manually from IBKR.</p>';
+      const expiries = chain.expirations.filter((e) => dte(e) > 0);
+      const src = `${chain.underlying?.asOf || ''}`;
+      return `<div class="notice info" style="margin:0 0 10px">Loaded ${escapeHtml(String(chain.rows.length))} contracts (delayed). Underlying ${money(chain.underlying?.price)}${src ? ` · ${escapeHtml(src)}` : ''}. Expiries within reach:
+        <select class="input-sm" data-chain-expiry="${w.symbol}" style="max-width:200px;margin-left:8px">
+          ${expiries.map((e) => `<option value="${e}" ${e === draft.expiry ? 'selected' : ''}>${e} (${dte(e)} DTE)</option>`).join('')}
+        </select></div>`;
+    })()}
     <div class="form-grid">
       <div class="field"><label>Expiry date</label><input type="date" data-expiry="${w.symbol}" value="${escapeHtml(draft.expiry)}" /></div>
       <div class="field"><label>IV Rank <span class="hint">optional, if you have it</span></label><input data-manual="${w.symbol}" data-k="ivRank" value="${escapeHtml(draft.ivRank)}" placeholder="45" /></div>
     </div>
     <div class="table-wrap">
-      <table class="table"><thead><tr><th>Strike</th><th>Bid</th><th>Ask</th><th>Delta</th><th>OI</th><th>Volume</th><th>IV Rank</th><th></th></tr></thead>
+      <table class="table"><thead><tr><th>Strike</th><th>Bid</th><th>Ask</th><th>Delta</th><th>OI</th><th>Volume</th><th>IV Rank</th><th>IV</th><th></th></tr></thead>
       <tbody>${candidateRows(w, draft)}</tbody></table>
     </div>
     <button class="btn btn-secondary btn-sm mt" data-add-row="${w.symbol}">+ Add candidate strike</button>
@@ -254,6 +333,20 @@ export default {
 
     root.querySelectorAll('[data-signin]').forEach((b) => { b.onclick = () => ctx.openAccount(); });
 
+    root.querySelectorAll('[data-fetch-chain]').forEach((b) => {
+      b.onclick = async () => {
+        if (!ctx.auth.get() && ctx.auth.configured()) { ctx.openAccount(); return; }
+        await fetchChain(b.dataset.fetchChain, ctx);
+      };
+    });
+    root.querySelectorAll('[data-chain-expiry]').forEach((sel) => {
+      sel.onchange = () => {
+        const sym = sel.dataset.chainExpiry;
+        populateFromChain(sym, ctx, sel.value);
+        ctx.reload();
+      };
+    });
+
     // Manual / expiry inputs update drafts and recalc the checklist in place.
     const recalc = (sym) => {
       const host = root.querySelector(`#checklist-${sym}`);
@@ -296,7 +389,7 @@ export default {
     });
     root.querySelectorAll('[data-add-row]').forEach((b) => {
       b.onclick = () => {
-        drafts.get(b.dataset.addRow).candidates.push({ strike: '', bid: '', ask: '', delta: '', oi: '', volume: '', ivRank: '' });
+        drafts.get(b.dataset.addRow).candidates.push({ strike: '', bid: '', ask: '', delta: '', oi: '', volume: '', ivRank: '', iv: '' });
         ctx.reload();
       };
     });

@@ -90,7 +90,7 @@ npm run serve   # plain static server (no functions; market data unavailable)
 ## How to use it (the loop)
 
 1. **Screener** → add a ticker → press *Refresh data*. Read the fundamentals and the 18-point checklist.
-2. Tick the two required manual confirmations ("I'd happily own it", "not a meme / IPO / biotech / leveraged ETF") and enter strike candidates from your IBKR chain.
+2. Tick the two required manual confirmations ("I'd happily own it", "not a meme / IPO / biotech / leveraged ETF") and press **Load CBOE chain (greeks)** to auto-fill real put strikes (or type them from IBKR if the symbol isn't listed).
 3. If the verdict is *Good candidate*, press **Open a wheel with this setup**.
 4. **New wheel wizard** → review the premium, collateral, breakeven, annualized return and **maximum loss**, then follow the IBKR instructions and log the real fill.
 5. **Wheels** → track it. The app tells you the next step (take profit at ~50%, roll near 21 DTE, avoid earnings).
@@ -102,10 +102,14 @@ npm run serve   # plain static server (no functions; market data unavailable)
 ## Data sources & honest limitations
 
 - **Finnhub (free)** provides the quote, company profile, market cap, trailing EPS, average volume, 52-week range, earnings dates and dividend dates. Every value shows its source and timestamp.
-- **Options chains with greeks are NOT free.** Finnhub's option endpoints are paid. Without a Tradier developer key, the strike picker is **manual**: you type strike, bid/ask, delta, open interest and IV Rank from your IBKR screen. This is intentional — the app never invents Greeks or open interest.
+- **Options chains with greeks come from CBOE** (free, **no signup, no API key**). Press **Load CBOE chain (greeks)** in the Screener and it fills the strike picker with real puts — bid, ask, delta, IV, open interest, volume and mid — picking the expiry closest to 40 DTE and the strikes nearest delta 0.22. CBOE data is **delayed ~15 minutes**. Coverage is CBOE-listed US stocks/ETFs; if your symbol is not listed, the app says so and you enter values manually.
+- **IBKR**: your account has chains and greeks, but they cannot be fetched from a Netlify function — the TWS API needs a local TWS/IB Gateway socket, the Client Portal Web API needs a locally-running gateway or interactive OAuth + a market-data subscription, and OPRA options data is usually a paid add-on. So IBKR stays a **manual entry / verification** source here, not an automated one. (If you ever want it, the realistic option is a small local companion app on your own computer, not a hosted function.)
+- **Tradier** remains an optional fallback (`TRADIER_API_KEY`). CBOE is tried first.
+- **IV Rank** is not available from free data (it needs a year of IV history). The app shows the actual IV from the chain and keeps IV Rank as a manual field. Item C12 stays "Not verified" until you enter it — it never guesses.
 - **200-day moving average**: Finnhub's free plan often blocks daily candles. If it is unavailable, item A4 stays "Not verified" and you can add a short written override.
 - **Anything that cannot be fetched stays ❔ "Not verified"**, never "Pass". Unverified critical items (price fit, happy-to-own, earnings, cash) push the verdict to *Proceed with caution* or *Avoid*.
-- To enable automatic option chains, add `TRADIER_API_KEY` (free Tradier developer/sandbox account). The proxy will then return delayed chains with Greeks.
+
+Alternatives if CBOE coverage disappoints: **Alpaca** (free tier includes delayed options snapshots with greeks), **MarketData.app** (free tier), **Polygon.io** (paid for options), or **Yahoo Finance + Black-Scholes** (chain without greeks, then compute them — labelled as our estimate). The provider layer in `netlify/functions/market.js` is pluggable, so any of these can be added as a fallback.
 
 ---
 
@@ -143,7 +147,7 @@ src/
   views/                   dashboard, screener, newWheel, wheels, recovery,
                            roll, journal, learn, settings
 netlify/functions/
-  market.js                authenticated Finnhub/Tradier proxy (no keys in browser)
+  market.js                authenticated Finnhub/CBOE/Tradier proxy (no keys in browser)
   config.js                public Supabase URL + anon key + provider flags
 supabase/schema.sql        tables, enums, indexes, RLS policies
 tests/calc.test.js         unit tests

@@ -72,8 +72,9 @@ export default {
 
         <div class="card">
           <h3>Data providers</h3>
-          <div class="kv"><span>Finnhub</span><span>${cfg.providers?.finnhub ? badge('pass', 'Configured') : badge('warn', 'Missing key')}</span></div>
-          <div class="kv"><span>Tradier (options + greeks)</span><span>${cfg.providers?.tradier ? badge('pass', 'Configured') : badge('warn', 'Not configured — manual entry')}</span></div>
+          <div class="kv"><span>Finnhub (quotes & fundamentals)</span><span>${cfg.providers?.finnhub ? badge('pass', 'Configured') : badge('warn', 'Missing key')}</span></div>
+          <div class="kv"><span>CBOE (delayed options + greeks)</span><span>${badge('pass', 'Always on — no key')}</span></div>
+          <div class="kv"><span>Tradier (optional fallback)</span><span>${cfg.providers?.tradier ? badge('pass', 'Configured') : badge('unknown', 'Not configured')}</span></div>
           <div class="kv"><span>Supabase auth</span><span>${ctx.auth.configured() ? badge('pass', 'Configured') : badge('warn', 'Not configured')}</span></div>
           <div class="kv"><span>Signed in as</span><span>${escapeHtml(session?.user?.email || 'Not signed in')}</span></div>
           <button class="btn btn-secondary mt" id="testProvider">Test Finnhub connection</button>

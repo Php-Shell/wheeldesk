@@ -115,8 +115,16 @@ export const CHECKLIST = [
 
   item('C12', 'C', 'Implied volatility is reasonable', 'Too low means little premium; too high often signals an event.', (c) => {
     const ivRank = toNum(c.option?.ivRank ?? c.manual?.ivRank, null);
+    const iv = toNum(c.option?.iv, null);
     const s = mergeSettings(c.settings).thresholds;
-    if (ivRank === null) return { status: 'unknown', detail: 'IV Rank unavailable — enter it manually if you have it.' };
+    if (ivRank === null) {
+      return {
+        status: 'unknown',
+        detail: iv !== null
+          ? `Implied volatility is ${iv.toFixed(1)}%. IV Rank is not available from free data — enter it manually if you have it.`
+          : 'IV Rank unavailable — enter it manually if you have it.',
+      };
+    }
     if (ivRank >= s.ivMin && ivRank <= s.ivMax) return { status: 'pass', detail: `IV Rank ${ivRank}.` };
     if (ivRank < s.ivLow) return { status: 'warn', detail: `IV Rank ${ivRank} is low — premium may be small.` };
     if (ivRank > s.ivHigh) return { status: 'warn', detail: `IV Rank ${ivRank} is high — something may be happening.` };
