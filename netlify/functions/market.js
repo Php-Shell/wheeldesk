@@ -63,8 +63,75 @@ function unavailable(kind, symbol, message, provider = null) {
   return { symbol, kind, provider, fetchedAt: new Date().toISOString(), status: 'unavailable', data: null, message };
 }
 
-// Yahoo's chart endpoint needs no key or crumb and is a reliable fallback for
-// the underlying quote and for the 200-day average / average volume.
+// Nasdaq's public JSON API needs no key and covers both stocks and ETFs.
+// It gives historical daily closes (for the 200-day average) and the dividend
+// record including the latest/next ex-dividend date.
+const NASDAQ_HEADERS = { 'User-Agent': YF_UA, Accept: 'application/json', 'Accept-Language': 'en-US' };
+async function nasdaqFetch(path) {
+  const r = await fetch(`https://api.nasdaq.com/api${path}`, { headers: NASDAQ_HEADERS });
+  if (!r.ok) throw new Error(`Nasdaq ${r.status}`);
+  return r.json();
+}
+function usDateToISO(s) {
+  const m = /^(\d{1,2})\/(\d{1,2})\/(\d{4})$/.exec(String(s || '').trim());
+  return m ? `${m[3]}-${m[1].padStart(2, '0')}-${m[2].padStart(2, '0')}` : null;
+}
+const parseMoney = (v) => parseFloat(String(v ?? '').replace(/[$,]/g, ''));
+
+async function nasdaqHistorical(symbol) {
+  const to = new Date();
+  const from = new Date(Date.now() - 460 * 86400000);
+  const fmt = (d) => d.toISOString().slice(0, 10);
+  for (const assetclass of ['stocks', 'etf']) {
+    try {
+      const j = await nasdaqFetch(`/quote/${encodeURIComponent(symbol)}/historical?assetclass=${assetclass}&fromdate=${fmt(from)}&todate=${fmt(to)}&limit=320`);
+      const rows = j?.data?.tradesTable?.rows || [];
+      if (rows.length >= 30) {
+        const ordered = [...rows].reverse();
+        const closes = ordered.map((r) => parseMoney(r.close)).filter((n) => Number.isFinite(n));
+        const volumes = ordered.map((r) => parseMoney(r.volume)).filter((n) => Number.isFinite(n));
+        if (closes.length >= 30) return { closes, volumes };
+      }
+    } catch { /* try the next asset class */ }
+  }
+  return null;
+}
+
+async function nasdaqDividends(symbol) {
+  for (const assetclass of ['stocks', 'etf']) {
+    try {
+      const j = await nasdaqFetch(`/quote/${encodeURIComponent(symbol)}/dividends?assetclass=${assetclass}`);
+      const d = j?.data;
+      if (!d) continue;
+      const rows = d.dividends?.rows || [];
+      const announcedRaw = usDateToISO(d.exDividendDate);
+      if (!rows.length && !announcedRaw) continue; // "N/A" or no data → try next asset class
+      const lastEx = rows[0] ? usDateToISO(rows[0].exOrEffDate) : announcedRaw;
+      const lastAmount = rows[0] ? parseMoney(rows[0].amount) : d.annualizedDividend ? Number(d.annualizedDividend) / 4 : null;
+      const today = new Date().toISOString().slice(0, 10);
+      const announced = usDateToISO(d.exDividendDate);
+      let next = null;
+      let estimated = false;
+      if (announced && announced >= today) {
+        next = announced;
+      } else if (lastEx) {
+        const n = new Date(lastEx);
+        n.setDate(n.getDate() + 91);
+        next = n.toISOString().slice(0, 10);
+        estimated = true;
+      }
+      return ok('dividends', symbol, 'nasdaq', {
+        next: next ? { exDate: next, amount: lastAmount, estimated } : null,
+        yield: d.yield || null,
+        list: rows.slice(0, 8).map((r) => ({ exDate: usDateToISO(r.exOrEffDate), payDate: usDateToISO(r.paymentDate), amount: parseMoney(r.amount) })),
+      });
+    } catch { /* try the next asset class */ }
+  }
+  return null;
+}
+
+// Yahoo's chart endpoint needs no key or crumb and is a fallback for the
+// underlying quote and for the 200-day average / average volume.
 async function yahooChart(symbol, range = '1y') {
   const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}?range=${range}&interval=1d`;
   const r = await fetch(url, { headers: { 'User-Agent': YF_UA, Accept: 'application/json' } });
@@ -161,20 +228,29 @@ async function getEarnings(symbol) {
 }
 
 async function getDividends(symbol) {
-  const today = new Date();
-  const iso = today.toISOString().slice(0, 10);
-  const from = new Date(today.getTime() - 370 * 86400000).toISOString().slice(0, 10);
-  const to = new Date(today.getTime() + 400 * 86400000).toISOString().slice(0, 10);
-  const x = await finnhub('/stock/dividend', { symbol, from, to });
-  const list = Array.isArray(x) ? x : [];
-  if (!list.length) return unavailable('dividends', symbol, 'No dividend history returned.', 'finnhub');
-  const upcoming = list
-    .filter((d) => d.exDate && new Date(d.exDate) >= new Date(iso))
-    .sort((a, b) => String(a.exDate).localeCompare(String(b.exDate)))[0] || null;
-  return ok('dividends', symbol, 'finnhub', {
-    next: upcoming ? { exDate: upcoming.exDate, payDate: upcoming.payDate || null, amount: upcoming.amount ?? null } : null,
-    list: list.slice(-8).map((d) => ({ exDate: d.exDate, payDate: d.payDate, amount: d.amount })),
-  });
+  // Finnhub's dividend endpoint is premium on the free plan (403), so fall back
+  // to Nasdaq, which also gives us the announced/last ex-dividend date.
+  try {
+    const today = new Date();
+    const iso = today.toISOString().slice(0, 10);
+    const from = new Date(today.getTime() - 370 * 86400000).toISOString().slice(0, 10);
+    const to = new Date(today.getTime() + 400 * 86400000).toISOString().slice(0, 10);
+    const x = await finnhub('/stock/dividend', { symbol, from, to });
+    const list = Array.isArray(x) ? x : [];
+    if (list.length) {
+      const upcoming = list
+        .filter((d) => d.exDate && new Date(d.exDate) >= new Date(iso))
+        .sort((a, b) => String(a.exDate).localeCompare(String(b.exDate)))[0] || null;
+      return ok('dividends', symbol, 'finnhub', {
+        next: upcoming ? { exDate: upcoming.exDate, payDate: upcoming.payDate || null, amount: upcoming.amount ?? null } : null,
+        list: list.slice(-8).map((d) => ({ exDate: d.exDate, payDate: d.payDate, amount: d.amount })),
+      });
+    }
+  } catch { /* fall through to Nasdaq */ }
+
+  const n = await nasdaqDividends(symbol).catch(() => null);
+  if (n) return n;
+  return unavailable('dividends', symbol, 'No dividend data found. The company may not pay a dividend — verify manually.', null);
 }
 
 async function getCandles(symbol) {
@@ -189,8 +265,16 @@ async function getCandles(symbol) {
       closes = x.c;
       volumes = x.v || [];
     }
-  } catch { /* fall through to Yahoo */ }
+  } catch { /* fall through */ }
 
+  if (!closes.length) {
+    const n = await nasdaqHistorical(symbol).catch(() => null);
+    if (n?.closes?.length >= 30) {
+      provider = 'nasdaq';
+      closes = n.closes;
+      volumes = n.volumes || [];
+    }
+  }
   if (!closes.length) {
     const y = await yahooChart(symbol, '1y').catch(() => null);
     if (y?.closes?.length >= 30) {
@@ -199,7 +283,7 @@ async function getCandles(symbol) {
       volumes = y.volumes || [];
     }
   }
-  if (!closes.length) return unavailable('candles', symbol, 'Daily candles are not available from Finnhub or Yahoo.', null);
+  if (!closes.length) return unavailable('candles', symbol, 'Historical prices are not available on this Finnhub plan; Nasdaq/Yahoo did not respond either. Use the chart link or enter the 200-day average manually.', null);
 
   const last = closes.slice(-200);
   const ma200 = last.length >= 200 ? last.reduce((a, b) => a + b, 0) / last.length : null;
@@ -496,6 +580,6 @@ export default async (req) => {
     return json(body);
   } catch (err) {
     if (err?.unavailable) return json(unavailable(kind, rawSymbol, err.message), 200);
-    return json({ symbol: rawSymbol, kind, provider: null, fetchedAt: new Date().toISOString(), status: 'error', data: null, message: 'Provider request failed.', detail: String(err?.message || err) }, 200);
+    return json(unavailable(kind, rawSymbol, `Could not load ${kind} (${err?.message || 'provider error'}). Enter it manually below.`, null), 200);
   }
 };

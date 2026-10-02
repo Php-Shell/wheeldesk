@@ -154,8 +154,8 @@ export const CHECKLIST = [
 
   item('C15', 'C', 'Ex-dividend dates noted', 'For a short put this is informational; it matters more for covered calls.', (c) => {
     const d = c.dividends?.next;
-    if (!d) return { status: 'unknown', detail: 'No upcoming ex-dividend date found — verify manually.' };
-    return { status: 'pass', detail: `Next ex-dividend ${d.exDate}${d.amount ? ` (${money(d.amount)}/share)` : ''}.` };
+    if (!d) return { status: 'unknown', detail: 'No upcoming ex-dividend date found (the company may not pay one) — verify manually.' };
+    return { status: 'pass', detail: `Next ex-dividend ${d.exDate}${d.amount ? ` (${money(d.amount)}/share)` : ''}${d.estimated ? ' — estimated from the last ex-date, verify before relying on it' : ''}.` };
   }),
 
   item('D16', 'D', 'Enough free cash after the reserve', 'Never commit money you may need elsewhere.', (c) => {
@@ -182,6 +182,32 @@ export const CHECKLIST = [
   }),
 ];
 
+// Where to verify each item online, for the current ticker.
+const yahoo = (s) => `https://finance.yahoo.com/quote/${encodeURIComponent(s)}`;
+export const ITEM_LINKS = {
+  A2: (s) => `${yahoo(s)}/key-statistics`,
+  A3: (s) => `${yahoo(s)}/key-statistics`,
+  A4: (s) => `https://www.tradingview.com/chart/?symbol=${encodeURIComponent(s)}`,
+  A5: (s) => `${yahoo(s)}/key-statistics`,
+  A6: (s) => `https://finviz.com/quote.ashx?t=${encodeURIComponent(s)}`,
+  B8: (s) => `${yahoo(s)}/options`,
+  B9: (s) => `${yahoo(s)}/options`,
+  B10: (s) => `${yahoo(s)}/options`,
+  C11: (s) => `${yahoo(s)}/options`,
+  C12: (s) => `${yahoo(s)}/options`,
+  C14: (s) => `https://www.nasdaq.com/market-activity/stocks/${encodeURIComponent(s.toLowerCase())}/earnings`,
+  C15: (s) => `https://www.nasdaq.com/market-activity/stocks/${encodeURIComponent(s.toLowerCase())}/dividend-history`,
+};
+
+export function itemLink(id, symbol) {
+  if (!symbol) return null;
+  try {
+    return ITEM_LINKS[id]?.(symbol) || null;
+  } catch {
+    return null;
+  }
+}
+
 export const CRITICAL_ITEMS = new Set(['A1', 'A7', 'C14', 'D16']);
 
 export const STATUS_META = {
@@ -199,7 +225,7 @@ export function evaluateChecklist(context) {
     } catch (err) {
       out = { status: 'unknown', detail: 'Could not evaluate with the available data.' };
     }
-    return { ...entry, ...out, meta: STATUS_META[out.status] || STATUS_META.unknown };
+    return { ...entry, ...out, link: itemLink(entry.id, context.symbol), meta: STATUS_META[out.status] || STATUS_META.unknown };
   });
   const passCount = results.filter((r) => r.status === 'pass').length;
   const failCount = results.filter((r) => r.status === 'fail').length;
@@ -230,10 +256,15 @@ export function evaluateChecklist(context) {
 }
 
 // Build the context object from the fetched data + manual inputs.
+// Any manual value the user types overrides the fetched one (manual wins).
 export function buildChecklistContext({ state, data, option, manual, settings }) {
   const s = mergeSettings(settings || state?.settings);
+  const m = manual || {};
+  const has = (v) => v !== undefined && v !== null && v !== '';
   const budget = toNum(state?.account?.budget, s.budget);
   const cash = toNum(state?.account?.cash, budget);
+
+  const price = has(m.price) ? toNum(m.price, null) : (data?.quote?.price ?? null);
   const metrics = putMetrics({
     strike: option?.strike,
     mid: option?.mid,
@@ -241,24 +272,38 @@ export function buildChecklistContext({ state, data, option, manual, settings })
     ask: option?.ask,
     contracts: 1,
     commission: s.commission,
-    stockPrice: data?.quote?.price,
+    stockPrice: price,
     daysToExpiry: option?.dte,
     delta: option?.delta,
   });
-  const profile = data?.profile || {};
+
+  const profile = { ...(data?.profile || {}) };
+  if (has(m.marketCap)) profile.marketCap = toNum(m.marketCap, profile.marketCap);
+  const marketMetrics = { ...(data?.metrics || {}) };
+  if (has(m.epsTTM)) marketMetrics.epsTTM = toNum(m.epsTTM, marketMetrics.epsTTM);
+  if (has(m.avgVolume)) marketMetrics.avgVolume = toNum(m.avgVolume, marketMetrics.avgVolume);
+
+  const earnings = { ...(data?.earnings || {}) };
+  if (has(m.nextEarnings)) earnings.nextDate = m.nextEarnings;
+
+  const dividends = { ...(data?.dividends || {}) };
+  if (has(m.exDividend)) dividends.next = { exDate: m.exDividend, amount: has(m.dividendAmount) ? toNum(m.dividendAmount, null) : dividends.next?.amount ?? null, estimated: false };
+
+  const priceVsMa200 = has(m.priceVsMa200) ? toNum(m.priceVsMa200, null) : (data?.priceVsMa200 ?? null);
+
   const openWheels = (state?.wheels || []).filter((w) => w.state !== 'complete');
   const sameSectorWheels = profile.industry ? openWheels.filter((w) => (w.sector || '') === profile.industry).length : 0;
   return {
     symbol: data?.symbol,
-    price: data?.quote?.price,
+    price,
     profile,
-    metrics: data?.metrics || {},
-    dividends: data?.dividends || {},
-    earnings: data?.earnings || {},
-    priceVsMa200: data?.priceVsMa200 ?? null,
+    metrics: marketMetrics,
+    dividends,
+    earnings,
+    priceVsMa200,
     option: option || null,
     putMetrics: metrics,
-    manual: manual || {},
+    manual: m,
     settings: s,
     budget,
     portfolio: {

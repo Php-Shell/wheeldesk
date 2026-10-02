@@ -18,7 +18,7 @@ import {
   DEFAULT_SETTINGS,
 } from '../src/calc.js';
 import { blackScholes } from '../src/greeks.js';
-import { evaluateChecklist, buildChecklistContext, CHECKLIST } from '../src/checklist.js';
+import { evaluateChecklist, buildChecklistContext, CHECKLIST, itemLink } from '../src/checklist.js';
 import { toCsv } from '../src/export.js';
 import { money, dte, marketStatus } from '../src/format.js';
 
@@ -155,6 +155,28 @@ test('market status returns a known shape', () => {
   const s = marketStatus(new Date('2026-10-02T15:00:00Z'));
   assert.ok(['open', 'pre', 'after', 'closed'].includes(s.state));
   assert.match(s.clock, /ET/);
+});
+
+test('manual values override missing fetched data in the checklist', () => {
+  const ctx = buildChecklistContext({
+    state: { account: { budget: 10000, cash: 10000 }, wheels: [], settings: DEFAULT_SETTINGS },
+    data: { symbol: 'XYZ', quote: { price: 30 }, profile: { marketCap: null }, metrics: { epsTTM: null, avgVolume: null }, priceVsMa200: null, earnings: {}, dividends: {} },
+    option: { strike: 28, mid: 0.5, delta: -0.2, dte: 35, expiry: '2026-12-01', openInterest: 800 },
+    manual: { marketCap: 50e9, epsTTM: 2, avgVolume: 3e6, priceVsMa200: 5, nextEarnings: '2027-01-01', exDividend: '2026-11-01', happyToOwn: true, notMeme: true, ivRank: 45 },
+  });
+  const byId = Object.fromEntries(evaluateChecklist(ctx).items.map((i) => [i.id, i.status]));
+  assert.notEqual(byId.A2, 'unknown');
+  assert.notEqual(byId.A3, 'unknown');
+  assert.notEqual(byId.A4, 'unknown');
+  assert.notEqual(byId.A5, 'unknown');
+  assert.notEqual(byId.C14, 'unknown');
+  assert.notEqual(byId.C15, 'unknown');
+});
+
+test('checklist items expose external verification links', () => {
+  assert.match(itemLink('C14', 'AAPL'), /nasdaq\.com/);
+  assert.match(itemLink('A4', 'KO'), /tradingview/);
+  assert.equal(itemLink('A1', 'KO'), null);
 });
 
 test('black-scholes greeks have the expected signs and magnitudes', () => {

@@ -21,6 +21,14 @@ function draftFor(w) {
       notMeme: w.manual?.notMeme ?? '',
       trendOverride: w.manual?.trendOverride || '',
       ivRank: w.manual?.ivRank ?? '',
+      price: w.manual?.price ?? '',
+      marketCap: w.manual?.marketCap ?? '',
+      epsTTM: w.manual?.epsTTM ?? '',
+      avgVolume: w.manual?.avgVolume ?? '',
+      priceVsMa200: w.manual?.priceVsMa200 ?? '',
+      nextEarnings: w.manual?.nextEarnings ?? '',
+      exDividend: w.manual?.exDividend ?? '',
+      dividendAmount: w.manual?.dividendAmount ?? '',
     });
   }
   return drafts.get(w.symbol);
@@ -195,6 +203,47 @@ function scanResultsTable(ctx) {
   <p class="muted" style="font-size:12px;margin-top:8px">Score = passes minus fails/unknowns. Manual items (A6/A7) and IV Rank count as unknown in a scan, so confirm them on the ticker before trading. ⚠︎ means the strike is above your per-wheel limit.</p>`;
 }
 
+function sparklineSvg(closes, ma200) {
+  if (!Array.isArray(closes) || closes.length < 5) return '';
+  const w = 560;
+  const h = 96;
+  const pad = 6;
+  const vals = [...closes];
+  if (ma200) vals.push(ma200);
+  const min = Math.min(...vals);
+  const max = Math.max(...vals);
+  const span = max - min || 1;
+  const x = (i) => pad + (i * (w - 2 * pad)) / (closes.length - 1);
+  const y = (v) => h - pad - ((v - min) / span) * (h - 2 * pad);
+  const pts = closes.map((c, i) => `${x(i).toFixed(1)},${y(c).toFixed(1)}`).join(' ');
+  const up = closes[closes.length - 1] >= closes[0];
+  const maY = ma200 ? y(ma200).toFixed(1) : null;
+  return `<svg viewBox="0 0 ${w} ${h}" preserveAspectRatio="none" style="width:100%;height:96px;display:block">
+    <polyline points="${pts}" fill="none" stroke="${up ? '#0f9d6c' : '#d9534f'}" stroke-width="2" stroke-linejoin="round" />
+    ${ma200 ? `<line x1="${pad}" y1="${maY}" x2="${w - pad}" y2="${maY}" stroke="#3b6fe0" stroke-dasharray="5 4" stroke-width="1.5" /><text x="${w - pad}" y="${Number(maY) - 4}" text-anchor="end" font-size="11" fill="#3b6fe0">200-DMA ${ma200.toFixed(2)}</text>` : ''}
+  </svg>`;
+}
+
+function manualField(sym, key, label, url, draft, placeholder = '') {
+  return `<div class="field"><label>${escapeHtml(label)} <a href="${url}" target="_blank" rel="noopener" style="font-weight:600;text-transform:none;letter-spacing:0">find ↗</a></label>
+    <input data-manual="${sym}" data-k="${key}" value="${escapeHtml(draft[key] ?? '')}" placeholder="${escapeHtml(placeholder)}" /></div>`;
+}
+
+function dataLinks(sym) {
+  const s = encodeURIComponent(sym);
+  const sl = encodeURIComponent(sym.toLowerCase());
+  return {
+    quote: `https://finance.yahoo.com/quote/${s}`,
+    stats: `https://finance.yahoo.com/quote/${s}/key-statistics`,
+    chart: `https://www.tradingview.com/chart/?symbol=${s}`,
+    stockcharts: `https://stockcharts.com/h-sc/ui?s=${s}`,
+    finviz: `https://finviz.com/quote.ashx?t=${s}`,
+    earnings: `https://www.nasdaq.com/market-activity/stocks/${sl}/earnings`,
+    dividends: `https://www.nasdaq.com/market-activity/stocks/${sl}/dividend-history`,
+    options: `https://finance.yahoo.com/quote/${s}/options`,
+  };
+}
+
 function checklistHtml(w, ctx) {
   const draft = draftFor(w);
   const option = activeOption(w, draft);
@@ -203,6 +252,14 @@ function checklistHtml(w, ctx) {
     notMeme: draft.notMeme === 'yes' ? true : draft.notMeme === 'no' ? false : null,
     trendOverride: draft.trendOverride || null,
     ivRank: draft.ivRank === '' ? null : Number(draft.ivRank),
+    price: draft.price === '' ? null : draft.price,
+    marketCap: draft.marketCap === '' ? null : draft.marketCap,
+    epsTTM: draft.epsTTM === '' ? null : draft.epsTTM,
+    avgVolume: draft.avgVolume === '' ? null : draft.avgVolume,
+    priceVsMa200: draft.priceVsMa200 === '' ? null : draft.priceVsMa200,
+    nextEarnings: draft.nextEarnings === '' ? null : draft.nextEarnings,
+    exDividend: draft.exDividend === '' ? null : draft.exDividend,
+    dividendAmount: draft.dividendAmount === '' ? null : draft.dividendAmount,
   };
   const context = buildChecklistContext({ state: ctx.state, data: w.data, option, manual, settings: ctx.state.settings });
   const result = evaluateChecklist(context);
@@ -216,7 +273,7 @@ function checklistHtml(w, ctx) {
         <div class="check-item ${i.status}">
           <span class="check-ico" title="${escapeHtml(i.meta.label)}">${i.meta.icon}</span>
           <div><div class="check-label">${i.id} · ${tip(escapeHtml(i.label), i.why)}</div>
-          <div class="check-detail">${escapeHtml(i.detail || i.meta.label)}</div></div>
+          <div class="check-detail">${escapeHtml(i.detail || i.meta.label)}${i.link ? ` <a href="${i.link}" target="_blank" rel="noopener" style="font-weight:600;white-space:nowrap">find ↗</a>` : ''}</div></div>
           <span class="badge ${i.status}">${escapeHtml(i.meta.label)}</span>
         </div>`).join('')}</div>`;
   }).join('');
@@ -270,22 +327,49 @@ function watchBody(w, ctx) {
     ? sources.map((s) => `<span class="source-tag">${escapeHtml(s.label)} · ${escapeHtml(s.provider)} · ${escapeHtml(s.fetchedAt ? fmtInZone(s.fetchedAt, 'America/New_York') + ' ET' : '')}</span>`).join('')
     : '<span class="source-tag">No live data yet — sign in and press Refresh, or enter values manually.</span>';
   const authBanner = '';
+  const links = dataLinks(w.symbol);
+  const eff = (k, v) => (draft[k] !== '' && draft[k] !== undefined && draft[k] !== null ? draft[k] : v);
+  const closes = data?.raw?.candles?.data?.closes;
+  const ma200 = data?.raw?.candles?.data?.ma200 ?? null;
+  const vsMa = eff('priceVsMa200', data?.priceVsMa200);
+  const div = data?.dividends?.next;
+  const divEx = eff('exDividend', div?.exDate);
+  const divAmt = draft.dividendAmount !== '' ? draft.dividendAmount : div?.amount;
+  const divEst = !draft.exDividend && div?.estimated;
 
   return `
     <div class="grid grid-3" style="margin-bottom:8px">
-      <div class="kv"><span>Price</span><span>${data?.quote?.price != null ? money(data.quote.price) : '—'}</span></div>
-      <div class="kv"><span>Market cap</span><span>${data?.profile?.marketCap != null ? money(data.profile.marketCap, 'USD', 0) : '—'}</span></div>
-      <div class="kv"><span>Trailing EPS</span><span>${fmt(data?.metrics?.epsTTM)}</span></div>
-      <div class="kv"><span>Avg volume</span><span>${data?.metrics?.avgVolume != null ? `${(data.metrics.avgVolume / 1e6).toFixed(2)}M` : '—'}</span></div>
+      <div class="kv"><span>Price</span><span>${eff('price', data?.quote?.price) != null ? money(eff('price', data?.quote?.price)) : '—'}</span></div>
+      <div class="kv"><span>Market cap</span><span>${eff('marketCap', data?.profile?.marketCap) != null ? money(eff('marketCap', data?.profile?.marketCap), 'USD', 0) : '—'}</span></div>
+      <div class="kv"><span>Trailing EPS</span><span>${eff('epsTTM', data?.metrics?.epsTTM) != null && Number.isFinite(Number(eff('epsTTM', data?.metrics?.epsTTM))) ? Number(eff('epsTTM', data?.metrics?.epsTTM)).toFixed(2) : fmt(eff('epsTTM', data?.metrics?.epsTTM))}</span></div>
+      <div class="kv"><span>Avg volume</span><span>${eff('avgVolume', data?.metrics?.avgVolume) != null ? `${(Number(eff('avgVolume', data?.metrics?.avgVolume)) / 1e6).toFixed(2)}M` : '—'}</span></div>
       <div class="kv"><span>52-week range</span><span>${data?.metrics?.low52 != null && data?.metrics?.high52 != null ? `${money(data.metrics.low52)} – ${money(data.metrics.high52)}` : '—'}</span></div>
-      <div class="kv"><span>Price vs 200-DMA</span><span>${data?.priceVsMa200 != null ? `${data.priceVsMa200 >= 0 ? '+' : ''}${data.priceVsMa200.toFixed(1)}%` : '—'}</span></div>
-      <div class="kv"><span>Next earnings</span><span>${data?.earnings?.nextDate ? `${data.earnings.nextDate}${data.earnings.daysUntil != null ? ` (in ${data.earnings.daysUntil}d)` : ''}` : '—'}</span></div>
-      <div class="kv"><span>Next ex-dividend</span><span>${data?.dividends?.next?.exDate ? `${data.dividends.next.exDate}${data.dividends.next.amount ? ` · ${money(data.dividends.next.amount)}` : ''}` : '—'}</span></div>
+      <div class="kv"><span>Price vs 200-DMA</span><span>${vsMa != null ? `${Number(vsMa) >= 0 ? '+' : ''}${Number(vsMa).toFixed(1)}%` : '—'}</span></div>
+      <div class="kv"><span>Next earnings</span><span>${eff('nextEarnings', data?.earnings?.nextDate) ? `${escapeHtml(String(eff('nextEarnings', data?.earnings?.nextDate)))}${data?.earnings?.daysUntil != null && draft.nextEarnings === '' ? ` (in ${data.earnings.daysUntil}d)` : ''}` : '—'}</span></div>
+      <div class="kv"><span>Next ex-dividend</span><span>${divEx ? `${escapeHtml(String(divEx))}${divAmt ? ` · ${money(divAmt)}` : ''}${divEst ? ' (est.)' : ''}` : '—'}</span></div>
       <div class="kv"><span>Industry</span><span>${escapeHtml(data?.profile?.industry || '—')}</span></div>
     </div>
     <div class="source-line">${sourceLine}</div>
     ${authBanner}
     ${data?.messages?.length ? `<div class="notice info" style="margin-top:10px">${escapeHtml(data.messages.join(' '))}</div>` : ''}
+
+    <div class="card-head" style="margin-top:16px"><h4>Price trend (200-day)</h4>
+      <span class="link-list"><a href="${links.chart}" target="_blank" rel="noopener">TradingView ↗</a><a href="${links.stockcharts}" target="_blank" rel="noopener">StockCharts ↗</a><a href="${links.quote}" target="_blank" rel="noopener">Yahoo ↗</a></span></div>
+    ${closes?.length ? `${sparklineSvg(closes, ma200)}<p class="muted" style="font-size:12px;margin:6px 0 0">${ma200 ? `${Number(eff('price', data?.quote?.price)) >= ma200 ? 'Above' : 'Below'} the 200-day average — item A4 is judged from this.` : 'Last ~120 daily closes.'}</p>`
+      : `<div class="notice info" style="margin:0">Historical prices were unavailable from the free sources. <a href="${links.chart}" target="_blank" rel="noopener">Open the chart ↗</a> to check the trend, then enter the % vs 200-DMA below or write an override reason.</div>`}
+
+    <div class="card-head" style="margin-top:18px"><h4>Manual / override values</h4><span class="muted" style="font-size:12px">Optional. Manual values override fetched data and feed the checklist.</span></div>
+    <div class="grid grid-3">
+      ${manualField(w.symbol, 'price', 'Price', links.quote, draft, '61.20')}
+      ${manualField(w.symbol, 'marketCap', 'Market cap ($)', links.stats, draft, '260000000000')}
+      ${manualField(w.symbol, 'epsTTM', 'Trailing EPS', links.stats, draft, '2.40')}
+      ${manualField(w.symbol, 'avgVolume', 'Average daily volume', links.stats, draft, '14000000')}
+      ${manualField(w.symbol, 'priceVsMa200', 'Price vs 200-DMA (%)', links.chart, draft, '+3.5 or -6')}
+      ${manualField(w.symbol, 'ivRank', 'IV Rank (0–100)', links.options, draft, '45')}
+      ${manualField(w.symbol, 'nextEarnings', 'Next earnings date', links.earnings, draft, 'YYYY-MM-DD')}
+      ${manualField(w.symbol, 'exDividend', 'Next ex-dividend date', links.dividends, draft, 'YYYY-MM-DD')}
+      ${manualField(w.symbol, 'dividendAmount', 'Dividend per share ($)', links.dividends, draft, '0.27')}
+    </div>
 
     <div class="grid grid-3 mt">
       <div class="field"><label>Would you happily own 100 shares at this price?</label>
@@ -321,7 +405,7 @@ function watchBody(w, ctx) {
     })()}
     <div class="form-grid">
       <div class="field"><label>Expiry date</label><input type="date" data-expiry="${w.symbol}" value="${escapeHtml(draft.expiry)}" /></div>
-      <div class="field"><label>IV Rank <span class="hint">optional, if you have it</span></label><input data-manual="${w.symbol}" data-k="ivRank" value="${escapeHtml(draft.ivRank)}" placeholder="45" /></div>
+      <div class="field"><label>Chain source</label><input value="${chainLoading.has(w.symbol) ? 'Loading…' : chains.has(w.symbol) ? `Free delayed chain loaded (${escapeHtml(String(chains.get(w.symbol).rows.length))} contracts)` : 'Not loaded — press the button above'}" disabled /></div>
     </div>
     <div class="table-wrap">
       <table class="table"><thead><tr><th>Strike</th><th>Bid</th><th>Ask</th><th>Delta</th><th>OI</th><th>Volume</th><th>IV Rank</th><th>IV</th><th></th></tr></thead>
