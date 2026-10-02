@@ -19,6 +19,16 @@ const PUT_PHASES = [
     '2.2 Choose one 30–45 days out. Monthly expiries (3rd Friday) usually have the best liquidity.',
     '2.3 Double-check this expiry is BEFORE the earnings date from 0.2.',
   ] },
+  { title: 'Phase 2.5 — Screen the chain in THIS exact order', note: 'You are staring at a wall of lines. Do these in order and stop as soon as one fails — that is how you go from 200 rows to 1 candidate.', items: [
+    'Step A — Stock level first: is the next earnings date AFTER your chosen expiry? If not, stop and choose another expiry or ticker.',
+    'Step B — Expiry: pick 30–45 DTE (monthly 3rd Friday preferred). From now on, look only inside this one expiry block.',
+    'Step C — Direction: PUTS only, and only strikes at or below the current stock price. Ignore every line above the price.',
+    'Step D — DELTA first (the fast filter): read down the strikes until |delta| is between 0.15 and 0.30 (ideal 0.15–0.25). Everything outside that range is ignored — this is the single biggest time-saver.',
+    'Step E — Liquidity of that strike: Open Interest ≥ 500, THEN spread (Ask − Bid) ≤ $0.10 AND ≤ 10% of mid, THEN Volume ≥ 50. Fail any of these → try the next strike in the delta band.',
+    'Step F — Return: net premium ÷ collateral, then annualized (× 365 ÷ DTE). Target 10–30%.',
+    'Step G — Gut check: happy to own 100 shares at breakeven? Yes → that is your candidate. No → next strike.',
+    'Step H — Nothing passed? Widen to the next monthly expiry, relax one grade (e.g. spread to $0.10/10%), or pick another ticker. Never force a bad strike.',
+  ], table: [['#', 'Look at', 'Target', 'Why first'], ['A', 'Earnings vs expiry', 'Earnings AFTER', 'A gap can ruin the whole trade'], ['B', 'Expiry', '30–45 DTE', 'Best theta, still liquid'], ['C', 'Direction + side', 'PUTS below price', 'Removes half the screen'], ['D', 'Delta', '0.15–0.30', 'Fastest way to cut the lines'], ['E', 'OI → spread → volume', '≥500 · ≤$0.10/10% · ≥50', 'So you can actually get filled'], ['F', 'Annualized return', '10–30%', 'Are you paid enough?'], ['G', 'Ownership test', 'Happy at breakeven', 'The whole strategy depends on it']] },
   { title: 'Phase 3 — Pick the strike', note: 'For XYZ at $47.30, scan puts at $47 and lower.', items: [
     '3.1 Delta between −0.15 and −0.30 (ignore the minus sign). −0.15 to −0.25 is the beginner target. 1 − |delta| ≈ chance of expiring worthless (estimate).',
     '3.2 Spread test: Spread = Ask − Bid; Mid = (Bid + Ask)/2; Spread% = Spread ÷ Mid × 100. Need ≤ $0.10 AND ≤ 10%. Example Bid 0.62 / Ask 0.68 → spread 0.06, mid 0.65, 9.2% → acceptable.',
@@ -80,7 +90,8 @@ const CALL_PHASES = [
   { title: 'PATH A — Normal covered call', items: [
     'A.1 Chain → CALLS side.',
     'A.2 Expiry 30–45 DTE; earnings AFTER expiry.',
-    'A.3 GOLDEN RULE: strike ≥ adjusted basis, ALWAYS ($43.37 → $43.50 or $44+). Call deltas are positive; target 0.15–0.30. Strike rule beats delta rule.',
+    'A.3 Screen order for calls (do it in this order): STRIKE ≥ adjusted basis FIRST (non-negotiable) → then delta 0.15–0.30 → OI ≥ 500 → spread ≤ $0.10 AND ≤ 10% of mid → Volume ≥ 50 → annualized ≥ 6%. The strike rule beats the delta rule: if the only strike above your basis has delta 0.40, that is fine.',
+    'A.3b GOLDEN RULE: strike ≥ adjusted basis, ALWAYS ($43.37 → $43.50 or $44+).',
     'A.4 Spread ≤ $0.10 AND ≤ 10% of mid; OI ≥ 500; Volume ≥ 50.',
     'A.5 Money: Net = Mid×100 − commission; Return = Net ÷ (basis×100); Annualized = Return × 365 ÷ DTE; New basis = old basis − net/share. Take it if annualized ≥ 6% and strike ≥ basis.',
     'A.6 Ex-dividend: if ex-div is before expiry and the call is ITM, early assignment is possible (fine — you sell at ≥ basis).',

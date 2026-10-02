@@ -41,6 +41,7 @@ export default {
         <p class="muted">Also available any time from the floating <b>Rules</b> button (bottom-right), where you can tick items off or float it over other tabs.</p>
         ${RULEBOOK.map((section) => `
           <div class="check-group-title">${escapeHtml(section.title)}</div>
+          ${section.note ? `<p class="muted" style="font-size:12.5px;margin:0 0 8px">${escapeHtml(section.note)}</p>` : ''}
           <div class="checklist">
             ${section.items.map((it) => `<div class="check-item ${it.ok ? 'pass' : 'fail'}"><span class="check-ico">${it.ok ? '✅' : '❌'}</span><div class="check-label">${escapeHtml(it.text)}</div></div>`).join('')}
           </div>`).join('')}

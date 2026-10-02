@@ -21,11 +21,15 @@ export const RULEBOOK = [
     ],
   },
   {
-    title: 'Choosing the option',
+    title: 'Choosing the option — look in THIS order',
+    note: 'Only ever look at strikes BELOW the stock price, and one expiry at a time. Start with delta: it turns a wall of lines into a few candidates fastest.',
     items: [
-      { ok: true, text: '30–45 days to expiry (DTE): the sweet spot for time decay.' },
-      { ok: true, text: 'Delta ~0.15–0.30: roughly a 70–85% chance of expiring worthless. Lower delta = safer but smaller premium.' },
-      { ok: false, text: 'Avoid holding through earnings announcements. Check the earnings date before you sell — stocks can gap hugely.' },
+      { ok: true, text: '1) Earnings date first — it must be AFTER your expiry. Check it before anything else (stocks can gap hugely).' },
+      { ok: true, text: '2) Expiry: pick 30–45 days to expiry. Monthly expiries (3rd Friday) usually have the best liquidity.' },
+      { ok: true, text: '3) Delta −0.15 to −0.30 (sweet spot −0.15 to −0.25). Scan down the strikes until the delta lands in range — this is your fast filter (~70–85% chance of expiring worthless).' },
+      { ok: true, text: '4) Liquidity of THAT strike: Open Interest ≥ 500, then spread ≤ $0.10 AND ≤ 10% of mid (best ≤ $0.05 / 5%), then Volume ≥ 50.' },
+      { ok: true, text: '5) Return: net premium ÷ collateral, then annualized (× 365 ÷ DTE). Target 10–30%.' },
+      { ok: false, text: 'Stop if annualized < 10% (too little), or > 30% (something may be wrong). If nothing fits, widen DTE, try the next monthly, or pick another ticker.' },
     ],
   },
   {
@@ -40,6 +44,8 @@ export const RULEBOOK = [
 ];
 
 export const QUICK_REF = [
+  ['LOOK', 'Only strikes BELOW the stock price; one expiry at a time'],
+  ['SCREEN ORDER', 'Earnings → expiry → delta → OI → spread → volume → return'],
   ['DELTA', '−0.15 to −0.30 (ideal −0.15 to −0.25)'],
   ['DTE', '30–45 days, earnings AFTER expiry'],
   ['SPREAD', '≤ $0.10 AND ≤ 10% of mid (best: ≤ $0.05 / ≤ 5%)'],
@@ -77,6 +83,7 @@ let logState = { entryFill: '0.64', closeFill: '0.32', contracts: '1', commOpen:
 function rbChecklistHtml() {
   return RULEBOOK.map((section, si) => `
     <div class="rb-section">${escapeHtml(section.title)}</div>
+    ${section.note ? `<p class="muted" style="font-size:11.5px;margin:-2px 4px 6px">${escapeHtml(section.note)}</p>` : ''}
     ${section.items.map((item, ii) => {
       const key = `s${si}i${ii}`;
       return `<label class="rb-item ${item.ok ? '' : 'rb-dont'}">
