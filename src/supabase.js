@@ -48,10 +48,18 @@ export const auth = {
     return session;
   },
   async signIn(email, password) {
+    if (!email || !password) throw new Error('Enter your email and password.');
     return call('token?grant_type=password', { email, password });
   },
-  async signUp(email, password) {
+  async signUp(email, password, confirm) {
+    if (!email || !password) throw new Error('Enter an email and a password.');
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) throw new Error('Enter a valid email address.');
+    if (password.length < 6) throw new Error('Password must be at least 6 characters.');
+    if (confirm !== undefined && password !== confirm) throw new Error('Passwords do not match.');
     return call('signup', { email, password });
+  },
+  user() {
+    return session?.user || null;
   },
   async signOut() {
     session = null;
@@ -64,14 +72,6 @@ export const auth = {
   async sync(state) {
     if (!session || !cfg.url) return { status: 'offline' };
     const headers = { apikey: cfg.key, Authorization: `Bearer ${session.access_token}`, 'Content-Type': 'application/json' };
-    const existing = await fetch(`${cfg.url}/rest/v1/user_state?select=updated_at&user_id=eq.${session.user.id}`, { headers });
-    if (!existing.ok) throw new Error(`Sync read failed (${existing.status}).`);
-    const rows = await existing.json();
-    const remoteAt = rows?.[0]?.updated_at;
-    const localAt = state?.meta?.lastSyncAt;
-    if (remoteAt && localAt && new Date(remoteAt) > new Date(localAt)) {
-      return { status: 'conflict', remoteUpdatedAt: remoteAt };
-    }
     const r = await fetch(`${cfg.url}/rest/v1/user_state?on_conflict=user_id`, {
       method: 'POST',
       headers: { ...headers, Prefer: 'resolution=merge-duplicates' },
@@ -99,7 +99,12 @@ async function call(path, body) {
     body: JSON.stringify(body),
   });
   const x = await r.json().catch(() => ({}));
-  if (!r.ok) throw new Error(x.error_description || x.msg || x.message || 'Authentication failed.');
+  if (!r.ok) {
+    const msg = x.error_description || x.msg || x.message || 'Authentication failed.';
+    if (/anonymous sign-?ins? are disabled/i.test(msg)) throw new Error('Please enter a valid email and password.');
+    if (/already registered|already exists/i.test(msg)) throw new Error('That email already has an account — try signing in.');
+    throw new Error(msg);
+  }
   // Email confirmation flows may not return a session yet.
   if (x.access_token) {
     session = x;

@@ -26,7 +26,7 @@ function emptyState() {
     journal: [],
     snapshots: [],
     events: [],
-    meta: { demo: false, lastExportAt: null, lastSyncAt: null, createdAt: isoNow() },
+    meta: { demo: false, lastExportAt: null, lastSyncAt: null, createdAt: isoNow(), ownerId: null },
   };
 }
 
@@ -442,6 +442,12 @@ export const actions = {
     return mutate((d) => {
       d.meta.lastExportAt = isoNow();
     });
+  },
+  markSynced(at) {
+    return mutate((d) => { d.meta.lastSyncAt = at || isoNow(); }, { silent: true });
+  },
+  setOwner(id) {
+    return mutate((d) => { d.meta.ownerId = id || null; }, { silent: true });
   },
   importState(data) {
     return saveState({ ...emptyState(), ...data, version: 3, settings: mergeSettings(data.settings) });

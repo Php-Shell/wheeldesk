@@ -69,7 +69,7 @@ Then **Deploys → Trigger deploy → Clear cache and deploy site**.
 > Never put a Supabase **service-role** key in these variables. Only the **anon** key is safe, and only because RLS is enabled.
 
 ### 5. First run
-**No login needed.** Open your Netlify URL and start using it immediately — data loads right away. You only need to sign in if you want to sync your ledger to Supabase across devices (avatar top-right).
+When Supabase is configured, the site opens on a **landing page** with **Sign in / Create account**. Each account gets its **own private data** (Supabase Row Level Security), so you can safely share the link with a friend — you each sign in and only ever see your own wheels. Your ledger then **syncs automatically** after changes, and is pulled down when you sign in on another device. If you'd rather not make an account, click **"Continue without an account"** to use it local-only (data stays in that browser; the button also appears automatically if Supabase isn't configured).
 
 1. On the Dashboard, pick a **risk profile** (Safest / Balanced / Higher income).
 2. Open the **Screener** and press **⚡ Scan safe ideas** — it loads live data and free option chains, ranks the best puts, and shows a score.
@@ -211,6 +211,8 @@ Settings → **Wheel rules** exposes every threshold for the assistant (Path A/B
 
 | Symptom | Fix |
 | --- | --- |
+| "Anonymous sign-ins are disabled" | Fixed — the app now validates the email/password before calling Supabase. Enter a real email and a password (6+ chars), or enable email sign-ups in Supabase → Authentication → Providers → Email. |
+| A friend signed in but sees your data | They shouldn't — each account is isolated by RLS. On a shared device, signing out clears the local copy. If it persists, run the schema/migration again to ensure the RLS policies exist. |
 | "FINNHUB_API_KEY is not configured" | Add the variable in Netlify and redeploy. |
 | "No quote for this symbol" | Check the ticker symbol; the app falls back to Yahoo, then asks you to enter values manually. |
 | "No free chain available" | The symbol isn't listed on CBOE and Yahoo was rate-limited. Enter strike/bid/delta manually from IBKR — every calculation still works. |
