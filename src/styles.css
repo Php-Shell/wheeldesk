@@ -391,17 +391,17 @@ dialog.modal::backdrop { background: rgba(16, 24, 40, 0.45); backdrop-filter: bl
 /* --------------------------------------------------------------------------
    Floating rule book (FAB + panel + Picture-in-Picture)
    -------------------------------------------------------------------------- */
+.fab-stack { position: fixed; right: 18px; bottom: 18px; z-index: 180; display: flex; flex-direction: column; gap: 8px; align-items: flex-end; }
 .fab {
-  position: fixed; right: 18px; bottom: 18px; z-index: 180;
   display: inline-flex; align-items: center; gap: 8px;
-  padding: 12px 16px; border-radius: 30px; font-weight: 700; font-size: 14px;
-  background: var(--brand); color: #fff; box-shadow: 0 10px 26px rgba(15, 157, 108, 0.36);
+  padding: 11px 15px; border-radius: 30px; font-weight: 700; font-size: 14px;
+  background: var(--brand); color: #fff; box-shadow: 0 8px 22px rgba(15, 157, 108, 0.34);
 }
 .fab:hover { background: var(--brand-dark); transform: translateY(-1px); }
 .fab .fab-label { font-size: 13px; }
 
 .rb-panel {
-  position: fixed; right: 18px; bottom: 76px; z-index: 185;
+  position: fixed; right: 18px; bottom: 176px; z-index: 185;
   width: min(380px, 92vw); max-height: min(70vh, 640px);
   background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius);
   box-shadow: 0 24px 60px rgba(16, 24, 40, 0.28); display: flex; flex-direction: column; overflow: hidden;
@@ -418,8 +418,14 @@ dialog.modal::backdrop { background: rgba(16, 24, 40, 0.45); backdrop-filter: bl
 .rb-ico { line-height: 1.4; }
 .rb-text { color: var(--ink-soft); }
 .rb-item:has(input:checked) .rb-text { color: var(--muted); text-decoration: line-through; text-decoration-color: var(--line-strong); }
+.rb-foot { display: flex; align-items: center; justify-content: space-between; padding: 10px 14px; border-top: 1px solid var(--line); }
 .rb-pip-body { margin: 0; background: var(--bg); color: var(--ink); font: 13px var(--font); }
 .rb-pip { display: flex; flex-direction: column; height: 100vh; }
+.log-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px 10px; padding: 4px 2px 8px; }
+.log-grid label { display: grid; gap: 4px; font-size: 11px; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: 0.04em; }
+.log-grid .input-sm { text-transform: none; font-weight: 400; }
+.log-out { margin: 6px 0 10px; padding: 8px 10px; background: var(--panel-2); border-radius: var(--radius-sm); }
+.log-out .kv span:first-child { color: var(--muted); }
 .source-line { font-size: 11px; color: var(--muted); display: flex; flex-wrap: wrap; gap: 10px; margin-top: 8px; }
 .source-tag { background: var(--panel-2); border-radius: 20px; padding: 3px 9px; }
 .link-list { display: flex; flex-wrap: wrap; gap: 10px; font-size: 12.5px; }

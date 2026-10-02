@@ -5,6 +5,7 @@
 // ---------------------------------------------------------------------------
 
 import { toNum, round, clamp, money, dte as dteFn } from './format.js';
+import { DEFAULT_WHEEL_RULES } from './wheelEngine.js';
 
 export const CONTRACT_MULTIPLIER = 100;
 
@@ -51,6 +52,7 @@ export const DEFAULT_SETTINGS = {
     scenarioC: 25,
     cutLoss: 25,
   },
+  wheelRules: DEFAULT_WHEEL_RULES,
 };
 
 // One-click risk profiles. "Safest" trades a little premium for much less
@@ -125,6 +127,7 @@ export function mergeSettings(settings) {
     ...s,
     thresholds: { ...DEFAULT_SETTINGS.thresholds, ...(s.thresholds || {}) },
     recovery: { ...DEFAULT_SETTINGS.recovery, ...(s.recovery || {}) },
+    wheelRules: { ...DEFAULT_WHEEL_RULES, ...(s.wheelRules || {}) },
   };
 }
 

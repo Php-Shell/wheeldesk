@@ -1,4 +1,5 @@
 import { mergeSettings, selfTest, RISK_PRESETS } from '../calc.js';
+import { DEFAULT_WHEEL_RULES } from '../wheelEngine.js';
 import { money, pct, escapeHtml, localTimeZone, downloadText } from '../format.js';
 import { tradesToCsv, buildBackup, parseBackup } from '../export.js';
 import { field, readForm, toast, openModal, confirmDialog, badge } from '../ui.js';
@@ -7,6 +8,7 @@ export default {
   title: 'Settings',
   render(ctx) {
     const s = mergeSettings(ctx.state.settings);
+    const w = s.wheelRules;
     const acc = ctx.state.account;
     const cfg = ctx.globalConfig || {};
     const session = ctx.auth.get();
@@ -108,6 +110,31 @@ export default {
       </div>
 
       <div class="card mt">
+        <div class="card-head"><div><h3>Wheel rules (assignment assistant)</h3><p class="muted">Thresholds for the A/B/C decision engine and covered-call grading.</p></div>
+          <button class="btn btn-secondary btn-sm" id="resetWheelRules">Reset to beginner defaults</button></div>
+        <div class="grid grid-3">
+          ${field({ label: 'Path A max gap %', name: 'w_pathA', value: w.pathA_maxGapPct })}
+          ${field({ label: 'Path B max gap %', name: 'w_pathB', value: w.pathB_maxGapPct })}
+          ${field({ label: 'Call min annualized %', name: 'w_callMinAnn', value: w.callMinAnnualizedPct })}
+          ${field({ label: 'Call delta min', name: 'w_callDeltaMin', value: w.callDeltaMin })}
+          ${field({ label: 'Call delta max', name: 'w_callDeltaMax', value: w.callDeltaMax })}
+          ${field({ label: 'Call delta high warn', name: 'w_callDeltaHighWarn', value: w.callDeltaHighWarn })}
+          ${field({ label: 'Call DTE min', name: 'w_callDteMin', value: w.callDteNormalMin })}
+          ${field({ label: 'Call DTE max', name: 'w_callDteMax', value: w.callDteNormalMax })}
+          ${field({ label: 'Recovery B1 min net $/share', name: 'w_b1net', value: w.recoveryB1MinNet })}
+          ${field({ label: 'Recovery B2 min net $/share', name: 'w_b2net', value: w.recoveryB2MinNet })}
+          ${field({ label: 'Max spread $', name: 'w_spreadAbs', value: w.spreadMaxAbs })}
+          ${field({ label: 'Max spread % of mid', name: 'w_spreadPct', value: w.spreadMaxPctOfMid })}
+          ${field({ label: 'Min open interest', name: 'w_oi', value: w.minOpenInterest })}
+          ${field({ label: 'Min volume', name: 'w_vol', value: w.minVolume })}
+          ${field({ label: 'Take profit % of fill', name: 'w_takeProfit', value: w.takeProfitPctOfFill })}
+          ${field({ label: 'Review at DTE', name: 'w_reviewDte', value: w.reviewAtDte })}
+          ${field({ label: 'Close if below % of fill', name: 'w_reviewClose', value: w.reviewCloseIfBelowPctOfFill })}
+          ${field({ label: 'Include dividends in basis', name: 'w_divBasis', type: 'select', value: w.includeDividendsInBasis ? 'yes' : 'no', options: [{ value: 'no', label: 'No' }, { value: 'yes', label: 'Yes' }] })}
+        </div>
+      </div>
+
+      <div class="card mt">
         <div class="card-head"><h3>Calculation self-test</h3><button class="btn btn-secondary btn-sm" id="runSelfTest">Run self-test</button></div>
         <div id="selfTestOut" class="muted">Runs the built-in formula checks (example: sell a $50 put for $1.20, 30 DTE, $0.65 fee → net $119.35, return 2.39%, annualized ~29%).</div>
       </div>
@@ -133,6 +160,11 @@ export default {
         toast(`Applied the "${RISK_PRESETS[b.dataset.preset].label}" profile.`);
         ctx.reload();
       };
+    });
+    root.querySelector('#resetWheelRules')?.addEventListener('click', () => {
+      ctx.actions.updateSettings({ wheelRules: { ...DEFAULT_WHEEL_RULES } });
+      toast('Wheel rules reset to beginner defaults.');
+      ctx.reload();
     });
     root.querySelector('#saveSettings')?.addEventListener('click', () => {
       const v = readForm(root);
@@ -170,6 +202,18 @@ export default {
           trendFailPct: Number(v.t_trendFailPct),
         },
         recovery: { scenarioB: Number(v.r_scenarioB), scenarioC: Number(v.r_scenarioC), cutLoss: Number(v.r_cutLoss) },
+        wheelRules: {
+          pathA_maxGapPct: Number(v.w_pathA), pathB_maxGapPct: Number(v.w_pathB),
+          callMinAnnualizedPct: Number(v.w_callMinAnn),
+          callDeltaMin: Number(v.w_callDeltaMin), callDeltaMax: Number(v.w_callDeltaMax), callDeltaHighWarn: Number(v.w_callDeltaHighWarn),
+          callDteNormalMin: Number(v.w_callDteMin), callDteNormalMax: Number(v.w_callDteMax),
+          recoveryB1MinNet: Number(v.w_b1net), recoveryB2MinNet: Number(v.w_b2net),
+          spreadMaxAbs: Number(v.w_spreadAbs), spreadMaxPctOfMid: Number(v.w_spreadPct),
+          minOpenInterest: Number(v.w_oi), minVolume: Number(v.w_vol),
+          takeProfitPctOfFill: Number(v.w_takeProfit), reviewAtDte: Number(v.w_reviewDte),
+          reviewCloseIfBelowPctOfFill: Number(v.w_reviewClose),
+          includeDividendsInBasis: v.w_divBasis === 'yes',
+        },
       });
       toast('Settings saved.');
       ctx.reload();

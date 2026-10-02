@@ -231,7 +231,7 @@ export function wheelSummary(w, s = state) {
 export const actions = {
   updateSettings(patch) {
     return mutate((d) => {
-      d.settings = mergeSettings({ ...d.settings, ...patch, thresholds: { ...d.settings.thresholds, ...(patch.thresholds || {}) }, recovery: { ...d.settings.recovery, ...(patch.recovery || {}) } });
+      d.settings = mergeSettings({ ...d.settings, ...patch, thresholds: { ...d.settings.thresholds, ...(patch.thresholds || {}) }, recovery: { ...d.settings.recovery, ...(patch.recovery || {}) }, wheelRules: { ...(d.settings.wheelRules || {}), ...(patch.wheelRules || {}) } });
     });
   },
   applyPreset(name) {

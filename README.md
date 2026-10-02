@@ -17,6 +17,9 @@ A beginner-friendly dashboard for running the **cash-secured put + wheel** strat
 | **Two-step wheel loop** | Step 1 = sell a cash-secured put; assignment is **not a failure**, it's the signal to Step 2 = sell covered calls. A dedicated **covered-call wizard** (with chain recommendations and a cost-basis guard) launches from the wheel. |
 | **50% profit tracking** | The app tracks the current value of your open option (auto from the chain, or manual) and shows **premium captured %**, prompting you to close at the ~50% target. |
 | **Rolling recovery** | A losing short put opens a **rolling-first** recovery view: buy back and sell further out / lower, chain-driven suggestions, **net-credit** checks, and an "accept assignment" alternative. |
+| **Assignment assistant (A/B/C)** | Engine-driven: adjusted basis from the ledger, gap %, and a decision path. **Path A** normal covered call (with candidate grading + IBKR ticket), **Path B** recovery (B1–B4, default "hold and wait"), **Path C** exit (locked order: close the call first, accept the exact loss, then sell). Running-basis table included. |
+| **Floating tools** | Three bottom-right buttons — **Rules**, **Log close** (interactive P&L calculator), **Quick ref** — each with a **Float** (Document Picture-in-Picture) window for Chrome/Edge. |
+| **Practical checklists** | **Put checklist** and **Call checklist** pages: click-by-click IBKR Desktop walkthroughs with tickable steps, progress, and the key tables (delta, spread, money math, order fields). |
 | **New wheel wizard** | 5 guided steps: ticker → strike & expiry → honest review of the numbers → exact IBKR click path → log the real fill. |
 | **Wheels** | Event-sourced ledger with a visual state machine (short put → holding → short call → complete), a dated timeline, running cost basis, and one-click actions (buy to close, roll, assigned, sell call, called away, dividend, sell shares, close). |
 | **Recovery assistant** | If you're stuck holding shares: computes your adjusted cost basis, classifies A/B/C/D, compares covered-call candidates and recovery time, and gives plain-English exit instructions. |
@@ -177,6 +180,23 @@ tests/calc.test.js         unit tests
 ```
 
 ---
+
+## Assignment assistant — worked example (XYZ)
+
+- Sell 1 XYZ $44 put for $0.64, commission $0.66 → **net premium $63.34**.
+- Assigned at $44 (fee $0) → **adjusted basis = (44×100 + 0 − 63.34) ÷ 100 = $43.37**. IBKR shows $44.00 — use $43.37.
+- Stock at $42.10 → unrealized −$126.66, **gap 2.92% → Path A**.
+- Candidate $44 call, bid 0.49 / ask 0.53, 35 DTE, delta 0.27 → mid 0.51, spread 7.84% (OK), est. net $50.35, annualized ≈ 12.1%, passes.
+- Logged fill 0.51 → new basis **$42.86**. Called away at 44 → wheel profit **$113.68** (both methods agree).
+- Stock at $38.50 → gap 11.22% → **Path B**. At $36.00 → 16.99% → **Path B + monthly review**. Thesis broken → **Path C**.
+
+Run the **Self-test** in Settings to verify all 18 engine cases (T1–T18) plus the original calculation tests.
+
+### Database migration
+Run `migrations/002_assignment_engine.sql` in the Supabase SQL editor (after `supabase/schema.sql`). It adds the append-only `wheel_events` ledger, `wheel_checkins`, and the new `wheels` columns, with RLS. The app works fully offline with local storage even if you skip this.
+
+### Wheel rules
+Settings → **Wheel rules** exposes every threshold for the assistant (Path A/B gaps, call delta/DTE, minimum annualized, spread/OI/volume, take-profit %, review-at-DTE) with a **Reset to beginner defaults** button.
 
 ## Security notes
 
