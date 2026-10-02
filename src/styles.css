@@ -234,7 +234,16 @@ small { color: var(--muted); }
 .legend i { display: inline-block; width: 9px; height: 9px; border-radius: 3px; margin-right: 6px; }
 
 .progress { height: 8px; border-radius: 20px; background: var(--panel-2); overflow: hidden; }
-.progress i { display: block; height: 100%; background: var(--brand); border-radius: 20px; }
+.progress i { display: block; height: 100%; background: linear-gradient(90deg, var(--brand), #4fc79a); border-radius: 20px; }
+
+/* Live scan console */
+.scan-log {
+  margin-top: 8px; max-height: 180px; overflow: auto;
+  background: #0f172a; color: #cbd5e1; border-radius: 10px; padding: 10px 12px;
+  font: 11.5px/1.65 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+.scan-log:empty { display: none; }
+body.dark .scan-log { background: #0a0f0e; color: #aebbb4; }
 
 /* --------------------------------------------------------------------------
    Tables

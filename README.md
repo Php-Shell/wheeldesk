@@ -94,7 +94,7 @@ npm run serve   # plain static server (no functions; market data unavailable)
 ## How to use it (the loop)
 
 1. **Choose a risk profile** on the Dashboard (or Settings). This sets every threshold for you.
-2. **Screener → Auto-scan & rank** has three curated groups — **Safe income ideas**, **ETFs** and **Cheaper / higher risk** (e.g. ACHR, SOFI, RIVN) — plus *Scan my watchlist*. It loads live data + free chains (slim mode, throttled to respect the free API limits), checks affordability against your budget, and ranks the best puts.
+2. **Screener → Auto-scan & rank** has three curated groups — **Safe income ideas**, **ETFs** and **Cheaper / higher risk** (e.g. ACHR, SOFI, RIVN) — plus *Scan my watchlist*. It loads live data + free chains (slim mode, throttled to respect the free API limits), checks affordability, and ranks the best puts. A **progress bar and a live console** show exactly what it is doing for each ticker, and a **Why/notes** column explains each verdict ("A4 Not in a severe downtrend · B10 Bid-ask spread is tight"). It picks an expiry that **expires before the next earnings date** so item C14 passes, and hides "Avoid" rows by default (tick the box to see them with reasons).
 3. Open a ticker to see the 18-point checklist. Confirm the two manual items ("I'd happily own it", "not a meme / IPO / biotech / leveraged ETF"); the rest fills from live data. **Load free chain (greeks)** auto-fills real put strikes.
 4. If the verdict is *Good candidate*, press **Open a wheel with this setup**.
 5. **New wheel wizard** → review premium, collateral, breakeven, annualized return and **maximum loss**, follow the IBKR instructions, and log the real fill.

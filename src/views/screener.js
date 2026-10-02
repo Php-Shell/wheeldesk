@@ -25,7 +25,8 @@ const IDEA_GROUPS = {
   },
 };
 const QUICK_SEEDS = ['T', 'VZ', 'PFE', 'KMI', 'F', 'INTC', 'XLF', 'EEM', 'ACHR'];
-const scanState = { running: false, results: [], progress: '', group: '' };
+const scanState = { running: false, results: [], progress: '', group: '', total: 0, done: 0, log: [] };
+let scanShowAvoid = false;
 
 function draftFor(w) {
   if (!drafts.has(w.symbol)) {
@@ -75,13 +76,20 @@ function activeOption(w, draft) {
 // Pick an expiry in the 25–60 DTE window, preferring the most liquid one
 // (highest put open interest) with a tie-break near 40 DTE. Thin weeklies can
 // otherwise make open-interest checks fail for no good reason.
-function pickExpiry(expirations, rows) {
+function pickExpiry(expirations, rows, nextEarnings) {
   const scored = expirations
     .map((e) => ({ e, d: dte(e) }))
     .filter((x) => x.d != null && x.d > 0);
   if (!scored.length) return expirations[0] || '';
-  const preferred = scored.filter((x) => x.d >= 25 && x.d <= 60);
-  const pool = preferred.length ? preferred : scored;
+  // "No earnings before expiration" means the option must expire BEFORE the
+  // next earnings date, so prefer expiries that fall on/before earnings.
+  let candidates = scored;
+  if (nextEarnings && /^\d{4}-\d{2}-\d{2}$/.test(nextEarnings)) {
+    const before = scored.filter((x) => x.e < nextEarnings); // expires before earnings
+    if (before.length) candidates = before;
+  }
+  const preferred = candidates.filter((x) => x.d >= 25 && x.d <= 55);
+  const pool = preferred.length ? preferred : candidates;
   if (Array.isArray(rows) && rows.length) {
     const oiByExp = new Map();
     for (const r of rows) {
@@ -139,7 +147,8 @@ async function fetchChain(sym, ctx) {
     if (res?.status === 'ok' && res.data?.rows?.length) {
       chains.set(sym, res.data);
       if (res.data.underlying?.price != null) ctx.actions.setMark(sym, res.data.underlying.price);
-      populateFromChain(sym, ctx, pickExpiry(res.data.expirations, res.data.rows));
+      const w = ctx.state.watchlist.find((x) => x.symbol === sym);
+      populateFromChain(sym, ctx, pickExpiry(res.data.expirations, res.data.rows, w?.data?.earnings?.nextDate));
       toast(`${sym}: loaded ${res.data.rows.length} contracts from ${res.provider} (delayed).`);
     } else {
       toast(res?.message || `No chain available for ${sym} — enter strikes manually.`, 'warn');
@@ -169,58 +178,112 @@ function scanScore(result) {
   return result.passCount * 2 - result.failCount * 3 - result.criticalFails.length * 10 - result.unknownCount * 0.3;
 }
 
+function scanLogLine(text) {
+  scanState.log.push(text);
+  if (scanState.log.length > 60) scanState.log = scanState.log.slice(-60);
+}
+
 async function runScan(ctx, symbols, label = '') {
   scanState.running = true;
   scanState.results = [];
-  scanState.progress = '';
+  scanState.log = [];
+  scanState.total = symbols.length;
+  scanState.done = 0;
   scanState.group = label;
+  scanState.progress = `Starting scan: ${label || 'custom list'}…`;
+  ctx.reload(); // render the progress bar and disable the buttons
+  paintProgress();
   const marks = {};
+  await new Promise((r) => setTimeout(r, 150));
+
   let i = 0;
   for (const sym of symbols) {
     i += 1;
-    scanState.progress = `Loading ${sym}… (${i}/${symbols.length})`;
+    scanState.progress = `Loading ${sym} (${i}/${symbols.length}) — fundamentals…`;
     paintProgress();
+    scanLogLine(`→ ${sym}: fetching fundamentals`);
     try {
       // Slim fetch (skip dividends, Nasdaq candles) keeps us inside the free
       // Finnhub rate limit while scanning many tickers.
       const data = await ctx.providers.loadTickerData(sym, ctx.auth.token(), { slim: true, candlesSource: 'nasdaq' });
       if (data?.quote?.price != null) marks[sym] = data.quote.price;
+      scanLogLine(`  ${sym}: price ${data?.quote?.price != null ? money(data.quote.price) : 'n/a'}, EPS ${data?.metrics?.epsTTMFromQuarters ?? data?.metrics?.epsTTM ?? 'n/a'}, earnings ${data?.earnings?.nextDate ? toDMY(data.earnings.nextDate) : 'unknown'}`);
+      scanState.progress = `Loading ${sym} (${i}/${symbols.length}) — option chain…`;
+      paintProgress();
       let option = null;
       let provider = null;
       const optRes = await ctx.providers.loadOptions(sym, '', ctx.auth.token());
       if (optRes?.status === 'ok' && optRes.data?.rows?.length) {
         provider = optRes.provider;
-        option = bestPut(optRes.data, pickExpiry(optRes.data.expirations, optRes.data.rows), ctx);
+        option = bestPut(optRes.data, pickExpiry(optRes.data.expirations, optRes.data.rows, data?.earnings?.nextDate), ctx);
         if (option) option.provider = provider;
+        scanLogLine(`  ${sym}: chain from ${provider} (${optRes.data.rows.length} contracts)${option ? `, best put $${option.strike} Δ${Math.abs(option.delta).toFixed(2)} OI ${option.openInterest ?? '—'}` : ', no affordable strike'}`);
+      } else {
+        scanLogLine(`  ${sym}: no free chain — option items left unverified`);
       }
       const context = buildChecklistContext({ state: ctx.state, data, option, manual: {}, settings: ctx.state.settings });
       const result = evaluateChecklist(context);
+      const reasons = [...result.items.filter((x) => x.status === 'fail').map((x) => `${x.id} ${x.label}`)].slice(0, 2).join('; ');
+      scanLogLine(`✓ ${sym}: ${result.score} · ${result.verdict.label}${reasons ? ` (${reasons})` : ''}`);
       scanState.results.push({ sym, price: data?.quote?.price ?? null, option, result, provider, score: scanScore(result) });
     } catch (err) {
+      scanLogLine(`✗ ${sym}: ${err.message}`);
       scanState.results.push({ sym, error: err.message, result: null, score: -999 });
     }
-    await new Promise((r) => setTimeout(r, 400));
+    scanState.done = i;
+    paintProgress();
+    await new Promise((r) => setTimeout(r, 350));
   }
   if (Object.keys(marks).length) ctx.actions.setMarks(marks);
   scanState.results.sort((a, b) => b.score - a.score);
+  const usable = scanState.results.filter((r) => r.result && r.result.verdict.key !== 'avoid').length;
+  scanState.progress = `Done — ${scanState.results.length} checked, ${usable} worth a closer look.`;
+  scanLogLine(`— Scan complete: ${scanState.results.length} checked, ${usable} not "Avoid".`);
   scanState.running = false;
-  scanState.progress = '';
   ctx.reload();
 }
 
-function paintProgress(msg) {
-  const el = document.getElementById('scanProgress');
-  if (el) el.textContent = msg || '';
+function paintProgress() {
+  const total = scanState.total || 0;
+  const pct = total ? Math.round((scanState.done / total) * 100) : (scanState.running ? 4 : 0);
+  const bar = document.getElementById('scanBar');
+  if (bar) {
+    bar.style.width = `${pct}%`;
+    bar.style.transition = 'width .3s';
+  }
+  const p = document.getElementById('scanProgress');
+  if (p) p.textContent = scanState.progress || '';
+  const c = document.getElementById('scanCount');
+  if (c) c.textContent = total ? `${scanState.done}/${total}` : '';
+  const log = document.getElementById('scanLog');
+  if (log) {
+    log.innerHTML = scanState.log.slice(-18).map((l) => `<div>${escapeHtml(l)}</div>`).join('');
+    log.scrollTop = log.scrollHeight;
+  }
+}
+
+function scanWhy(r) {
+  if (!r.result) return '';
+  const fails = r.result.items.filter((x) => x.status === 'fail').map((x) => `${x.id} ${x.label}`);
+  const warns = r.result.items.filter((x) => x.status === 'warn').map((x) => `${x.id} ${x.label}`);
+  const list = [...fails, ...warns].slice(0, 3);
+  return list.length ? list.join(' · ') : 'No failing items — confirm the manual items (A6/A7, C12).';
 }
 
 function scanResultsTable(ctx) {
   if (!scanState.results.length) return '';
-  return `<div class="table-wrap mt"><table class="table"><thead><tr>
+  const usable = scanState.results.filter((r) => r.result && r.result.verdict.key !== 'avoid');
+  const avoided = scanState.results.filter((r) => r.result && r.result.verdict.key === 'avoid');
+  const rows = scanShowAvoid ? scanState.results : (usable.length ? usable : avoided);
+  const hiddenNote = !scanShowAvoid && usable.length === 0 && avoided.length
+    ? `<div class="notice info" style="margin-top:10px">All ${avoided.length} candidates were "Avoid". <label class="checkline" style="display:inline-flex"><input type="checkbox" id="scanShowAvoidInline" ${scanShowAvoid ? 'checked' : ''}/> Show them with the reasons</label></div>`
+    : '';
+  return `${hiddenNote}<div class="table-wrap mt"><table class="table"><thead><tr>
     <th>#</th><th>Ticker</th><th class="num">Price</th><th class="num">Score</th><th>Checklist</th><th>Verdict</th>
-    <th>Best put</th><th class="num">Net premium</th><th class="num">Ann.</th><th class="num">DTE</th><th>Source</th><th></th>
+    <th>Best put</th><th class="num">Net premium</th><th class="num">Ann.</th><th class="num">DTE</th><th>Why / notes</th><th></th>
   </tr></thead><tbody>
-  ${scanState.results.map((r, i) => {
-    if (r.error) return `<tr><td>${i + 1}</td><td class="sym">${escapeHtml(r.sym)}</td><td colspan="10" class="muted">${escapeHtml(r.error)}</td></tr>`;
+  ${rows.map((r, i) => {
+    if (r.error) return `<tr><td>${i + 1}</td><td class="sym">${escapeHtml(r.sym)}</td><td colspan="11" class="muted">${escapeHtml(r.error)}</td></tr>`;
     const o = r.option;
     const m = o ? putMetrics({ strike: o.strike, mid: o.mid, bid: o.bid, ask: o.ask, contracts: 1, commission: mergeSettings(ctx.state.settings).commission, daysToExpiry: o.dte, delta: o.delta }) : null;
     const vc = r.result.verdict.className === 'pass' ? 'pass' : r.result.verdict.className === 'warn' ? 'warn' : 'fail';
@@ -235,12 +298,12 @@ function scanResultsTable(ctx) {
       <td class="num">${m ? money(m.netPremium) : '—'}</td>
       <td class="num">${m?.annualized != null ? pct(m.annualized) : '—'}</td>
       <td class="num">${o?.dte ?? '—'}</td>
-      <td>${escapeHtml(r.provider || '—')}</td>
+      <td class="muted" style="font-size:12px;min-width:220px">${escapeHtml(scanWhy(r))}</td>
       <td>${o ? `<button class="btn btn-primary btn-sm" data-scan-open="${escapeHtml(r.sym)}" data-strike="${o.strike}" data-expiry="${o.expiry}" data-premium="${o.mid ?? ''}" data-delta="${o.delta}" data-oi="${o.openInterest ?? ''}">Open wheel →</button>` : ''}</td>
     </tr>`;
   }).join('')}
   </tbody></table></div>
-  <p class="muted" style="font-size:12px;margin-top:8px">Score = passes minus fails/unknowns. Manual items (A6/A7) and IV Rank count as unknown in a scan, so confirm them on the ticker before trading. ⚠︎ means the strike is above your per-wheel limit.</p>`;
+  <p class="muted" style="font-size:12px;margin-top:8px">Score = passes minus fails/unknowns. Manual items (A6/A7) and IV Rank count as unknown in a scan, so open a ticker to confirm them. ⚠︎ means the strike is above your per-wheel limit. Showing ${rows.length} of ${scanState.results.length}.</p>`;
 }
 
 function sparklineSvg(closes, ma200) {
@@ -557,7 +620,13 @@ export default {
             <button class="btn btn-primary btn-sm" id="scanWatch" ${scanState.running ? 'disabled' : ''}>Scan my watchlist</button>
           </div>
         </div>
-        <div id="scanProgress" class="muted" style="font-size:12.5px">${escapeHtml(scanState.progress)}${scanState.group && !scanState.running ? ` · last scan: ${escapeHtml(scanState.group)}` : ''}</div>
+        <div class="progress" style="height:8px;margin:12px 0 6px"><i id="scanBar" style="width:${scanState.total ? Math.round((scanState.done / scanState.total) * 100) : 0}%"></i></div>
+        <div class="row-between" style="font-size:12.5px">
+          <span id="scanProgress" class="muted">${escapeHtml(scanState.progress)}${!scanState.progress && scanState.group ? `Last scan: ${escapeHtml(scanState.group)}` : ''}</span>
+          <span id="scanCount" class="muted">${scanState.total ? `${scanState.done}/${scanState.total}` : ''}</span>
+        </div>
+        <div id="scanLog" class="scan-log">${scanState.log.slice(-18).map((l) => `<div>${escapeHtml(l)}</div>`).join('')}</div>
+        <label class="checkline" style="margin-top:10px"><input type="checkbox" id="scanShowAvoid" ${scanShowAvoid ? 'checked' : ''}/> Show "Avoid" rows too (with reasons)</label>
         ${scanResultsTable(ctx)}
       </div>
 
@@ -585,6 +654,10 @@ export default {
         if (g) runScan(ctx, g.symbols, g.label);
       });
     });
+    const showAvoid = root.querySelector('#scanShowAvoid');
+    if (showAvoid) showAvoid.onchange = (e) => { scanShowAvoid = e.target.checked; ctx.reload(); };
+    const showAvoidInline = root.querySelector('#scanShowAvoidInline');
+    if (showAvoidInline) showAvoidInline.onchange = (e) => { scanShowAvoid = e.target.checked; ctx.reload(); };
     root.querySelector('#scanWatch')?.addEventListener('click', () => {
       const watch = ctx.state.watchlist.map((w) => w.symbol);
       if (!watch.length) { toast('Your watchlist is empty — scanning the safe income ideas instead.', 'warn'); runScan(ctx, IDEA_GROUPS.income.symbols, IDEA_GROUPS.income.label); return; }
