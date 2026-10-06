@@ -145,12 +145,14 @@ export function etParts(date = new Date()) {
     day: '2-digit',
     hour: '2-digit',
     minute: '2-digit',
+    second: '2-digit',
     hour12: false,
   }).formatToParts(date);
   const get = (type) => parts.find((p) => p.type === type)?.value;
   const hour = Number(get('hour')) % 24;
   const minute = Number(get('minute'));
-  return { weekday: get('weekday'), year: Number(get('year')), month: Number(get('month')), day: Number(get('day')), hour, minute, minutes: hour * 60 + minute };
+  const second = Number(get('second')) || 0;
+  return { weekday: get('weekday'), year: Number(get('year')), month: Number(get('month')), day: Number(get('day')), hour, minute, second, minutes: hour * 60 + minute };
 }
 
 const WEEKEND = new Set(['Sat', 'Sun']);
@@ -182,6 +184,49 @@ export function marketStatus(now = new Date()) {
   }
   const label = { open: 'Market open', pre: 'Pre-market', after: 'After hours', closed: 'Market closed' }[state];
   return { state, label, open, clock: `${clock} ET`, weekday, nextOpenLabel };
+}
+
+// Safe trading window per the rule book: 10:00–15:30 ET, Mon–Fri.
+// (Avoids the first and last 30 minutes of the session; never pre/after-hours.)
+export const SAFE_OPEN_MIN = 600; // 10:00 ET
+export const SAFE_CLOSE_MIN = 930; // 15:30 ET
+
+export function fmtDur(totalSeconds) {
+  const s = Math.max(0, Math.floor(totalSeconds));
+  const h = Math.floor(s / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  const sec = s % 60;
+  if (h > 0) return `${h}h ${String(m).padStart(2, '0')}m ${String(sec).padStart(2, '0')}s`;
+  if (m > 0) return `${m}m ${String(sec).padStart(2, '0')}s`;
+  return `${sec}s`;
+}
+
+// Countdown to the next safe-window open, or to the close while it is open.
+// Uses the device clock for the ticking seconds and ET for the schedule.
+export function tradingCountdown(now = new Date()) {
+  const p = etParts(now);
+  const secOfDay = p.minutes * 60 + p.second;
+  const openSec = SAFE_OPEN_MIN * 60;
+  const closeSec = SAFE_CLOSE_MIN * 60;
+  const isWeekend = WEEKEND.has(p.weekday);
+
+  if (!isWeekend && secOfDay >= openSec && secOfDay < closeSec) {
+    const seconds = closeSec - secOfDay;
+    return { state: 'open', seconds, label: `Trading closes in ${fmtDur(seconds)}`, sub: 'Safe window 10:00–15:30 ET' };
+  }
+  if (!isWeekend && secOfDay < openSec) {
+    const seconds = openSec - secOfDay;
+    return { state: 'pre', seconds, label: `Trading opens in ${fmtDur(seconds)}`, sub: 'Safe window 10:00–15:30 ET' };
+  }
+  // After the close today, or the weekend: find the next weekday's 10:00 ET.
+  for (let i = 1; i < 8; i += 1) {
+    const probe = new Date(now.getTime() + i * 86400000);
+    const wd = etParts(probe).weekday;
+    if (WEEKEND.has(wd)) continue;
+    const seconds = (86400 - secOfDay) + (i - 1) * 86400 + openSec;
+    return { state: 'after', seconds, label: `Trading opens in ${fmtDur(seconds)}`, sub: `${wd} 10:00 ET (safe window)` };
+  }
+  return { state: 'after', seconds: null, label: 'Trading opens Monday 10:00 ET', sub: 'Safe window 10:00–15:30 ET' };
 }
 
 // ---- Text ----------------------------------------------------------------

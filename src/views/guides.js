@@ -45,19 +45,20 @@ const PUT_PHASES = [
     '4.6 Once filled, Portfolio shows XYZ 44 P, Position −1 (minus = you sold). Cash rises ~$64.',
   ], table: [['Field', 'Enter', 'Why'], ['Action', 'SELL (red)', 'Beginner mistake #1 — check twice'], ['Contract', 'XYZ … 44 PUT', 'Not CALL, right date/strike'], ['Quantity', '1', '1 contract = 100 shares obligation'], ['Order type', 'LMT', 'Never MKT on options'], ['Limit', '0.65 (mid)', 'Your price'], ['TIF', 'DAY', 'Cancels at close'], ['Outside RTH', 'unchecked', 'Regular hours only']] },
   { title: 'Phase 5 — Write it down immediately', items: [
-    'Log: ticker, action (Sell to Open PUT), strike, expiry + DTE, contracts, actual fill price, commission, net premium, date/time (ET + local), stock price at fill, delta, OI/Volume, bid/ask, collateral, breakeven, earnings date, ex-div date, take-profit target (50%), 21-DTE review date, notes.',
+    'Log: ticker, action (Sell to Open PUT), strike, expiry + DTE, contracts, actual fill price, commission, net premium, date/time (ET + local), stock price at fill, delta, OI/Volume, bid/ask, collateral, breakeven, earnings date, ex-div date, walk-away GTC target (buy back at 20% of fill ⇒ ~80% captured), 21-DTE backstop date, notes.',
   ] },
-  { title: 'Phase 6 — Set your "walk away" GTC order right away', items: [
-    '6.1 Portfolio → XYZ 44 P (−1) → right-click → Close Position (or click → Buy).',
-    '6.2 Action BUY · Quantity 1 · LMT at 50% of fill rounded DOWN (0.64 → 0.32) · TIF GTC · Outside RTH unchecked.',
-    '6.3 Preview → Submit. Confirm it shows under Orders as Working/Submitted with GTC.',
+  { title: 'Phase 6 — Set your "walk away at ~80%" GTC order right away', note: 'You keep ~80% of the premium and you never wait for expiry. The GTC does the work — you do not need to watch the clock.', items: [
+    '6.1 Portfolio → XYZ 44 P (−1) → right-click → Close Position (or click the position → Buy).',
+    '6.2 Action BUY · Quantity 1 · Order type LMT · Limit = 20% of your fill price, ROUNDED DOWN to the nearest $0.01 · TIF GTC · Outside RTH unchecked. Example: you sold at 0.64 → 0.64 × 0.20 = 0.128 → enter 0.12. (Buying it back for ~0.12 keeps ~80% of the premium.)',
+    '6.3 Preview → Submit. Confirm it shows under Orders as Working / Submitted with GTC — it then stays active every day until it fills, so you walk away with ~80% without waiting for expiry, no matter the timing.',
+    '6.4 Leave it alone. Do NOT lower the limit to chase a faster fill. If it has not filled by the 21-DTE backstop (Phase 7), decide then.',
   ] },
-  { title: 'Phase 7 — Calendar checkpoints', items: [
-    'Weekly: is the GTC still working? Yes → do nothing.',
-    '21 DTE: if the put is ≤ 70% of your fill price (≤ 0.45), buy to close. Cancel the GTC FIRST, then BUY LMT at the mid.',
+  { title: 'Phase 7 — Calendar checkpoints (backstops only)', items: [
+    'Weekly: is the GTC still working? Yes → do nothing. Your GTC exits you at ~80% automatically — you are not waiting for expiry.',
+    '21 DTE (backstop): if the 80% GTC still has not filled, decide: hold to expiry, or close at the mid (cancel the GTC FIRST).',
     'Stock near the strike (within 2%): still want to own it at breakeven? Yes → hold; No → close or roll only for a net credit.',
     'Stock below the strike: assignment likely — this is the Wheel, not a failure. Open the Assignment Assistant.',
-    'Expiry week: close by Thursday, or by 15:00 ET on expiry day at the latest.',
+    'Expiry week: close by Thursday, or by 15:00 ET on expiry day at the latest. Never let an option near the strike expire on its own.',
   ] },
   { title: 'Phase 8 — Log the close', items: [
     'Use the floating "Log close" tool (bottom-right) to compute gross/net P&L, return and annualized.',

@@ -143,7 +143,15 @@ small { color: var(--muted); }
 .nav-item.active { background: var(--brand-soft); color: var(--brand-dark); font-weight: 700; }
 .nav-ico { width: 20px; text-align: center; font-size: 15px; }
 
-.sidebar-foot { margin-top: auto; display: flex; align-items: center; gap: 8px; color: var(--muted); font-size: 11px; }
+.sidebar-foot { margin-top: 10px; display: flex; align-items: center; gap: 8px; color: var(--muted); font-size: 11px; }
+
+/* Live market / safe-window countdown */
+.mkt-count { margin-top: auto; display: flex; flex-direction: column; gap: 3px; padding: 11px 12px; border-radius: var(--radius-sm); background: var(--panel-2); border: 1px solid var(--line); font-size: 12.5px; font-weight: 600; color: var(--ink-soft); font-variant-numeric: tabular-nums; }
+.mkt-count-sub { font-size: 10.5px; font-weight: 500; color: var(--muted); }
+.mkt-count-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--muted); margin-bottom: 4px; }
+.mkt-count-dot.open { background: var(--brand); box-shadow: 0 0 0 4px var(--brand-soft); }
+.mkt-count-dot.pre { background: var(--amber); box-shadow: 0 0 0 4px var(--amber-soft); }
+.mkt-count[data-state="open"] { border-color: var(--brand); }
 .status-dot { width: 9px; height: 9px; border-radius: 50%; background: var(--brand); box-shadow: 0 0 0 4px var(--brand-soft); }
 .status-dot.pending { background: var(--amber); box-shadow: 0 0 0 4px var(--amber-soft); }
 .status-dot.offline { background: var(--muted); box-shadow: 0 0 0 4px var(--panel-2); }
@@ -469,7 +477,7 @@ dialog.modal::backdrop { background: rgba(16, 24, 40, 0.45); backdrop-filter: bl
 
 @media (max-width: 860px) {
   .sidebar { width: 66px; padding: 18px 10px; }
-  .brand div, .mode-switch span, .nav-item span:not(.nav-ico), .sidebar-foot #syncText { display: none; }
+  .brand div, .mode-switch span, .nav-item span:not(.nav-ico), .sidebar-foot #syncText, .mkt-count { display: none; }
   .nav-item { justify-content: center; padding: 12px 4px; }
   .nav-ico { width: auto; }
   .main { margin-left: 66px; width: calc(100% - 66px); padding: 22px 16px 32px; }

@@ -8,7 +8,7 @@ import { getConfig, loadTickerData, loadOptions, searchSymbols, testProvider } f
 import * as ui from './ui.js';
 import * as format from './format.js';
 import { views, DEFAULT_VIEW } from './views/index.js';
-import { marketStatus, fmtInZone, localTimeZone, downloadText, escapeHtml } from './format.js';
+import { marketStatus, fmtInZone, localTimeZone, downloadText, escapeHtml, tradingCountdown } from './format.js';
 import { buildBackup, parseBackup } from './export.js';
 import { mountRulebook } from './rulebook.js';
 import { showGate, hideGate } from './landing.js';
@@ -155,6 +155,23 @@ function wireControls() {
     const mkt = marketStatus();
     document.getElementById('topEyebrow').textContent = `${getState().account.name || 'Paper account'} / ${mkt.label.toUpperCase()} / ${mkt.clock}`;
   }, 60000);
+
+  // Live safe-window countdown (ticks every second).
+  updateMarketCountdown();
+  setInterval(updateMarketCountdown, 1000);
+}
+
+function updateMarketCountdown() {
+  const label = document.getElementById('mktCountLabel');
+  if (!label) return;
+  const c = tradingCountdown();
+  label.textContent = c.label;
+  const sub = document.getElementById('mktCountSub');
+  if (sub) sub.textContent = c.sub;
+  const dot = document.getElementById('mktCountDot');
+  if (dot) dot.className = `mkt-count-dot ${c.state === 'open' ? 'open' : c.state === 'after' ? 'after' : 'pre'}`;
+  const box = document.getElementById('mktCount');
+  if (box) box.dataset.state = c.state;
 }
 
 function openAccount() {

@@ -35,7 +35,7 @@ export const RULEBOOK = [
   {
     title: 'Managing the trade',
     items: [
-      { ok: true, text: 'Close at ~50% profit. If you sold a put for $80 and can buy it back for $40, do it and open a new one. Selling before expiry reduces risk and frees up capital faster.' },
+      { ok: true, text: 'Close for profit before expiry. Many people place a GTC buy-to-close at 20% of the fill price right after the fill (keeping ~80% of the premium) so they never wait for expiry; the classic target is ~50% (buy back at half). Selling early reduces risk and frees up capital faster.' },
       { ok: true, text: "Never sell a covered call below your real cost basis, unless you've decided you're okay locking in a loss to exit the stock." },
       { ok: true, text: 'Watch ex-dividend dates when holding covered calls. Early assignment can happen the day before, and you would miss the dividend.' },
       { ok: true, text: 'Keep a journal: every trade, premium, outcome, and lesson.' },
@@ -53,7 +53,7 @@ export const QUICK_REF = [
   ['RETURN', '10–30% annualized'],
   ['CASH', 'Strike × 100 ≤ $5,000 · keep ≥ $1,000 free'],
   ['ORDER', 'Click BID → SELL → 1 → LMT @ mid → DAY → no Outside RTH'],
-  ['TAKE PROFIT', 'GTC BUY LMT at 50% of fill price, placed right after fill'],
+  ['TAKE PROFIT', 'GTC BUY LMT at 20% of fill → keeps ~80%. Place right after the fill; do not wait for expiry.'],
   ['REVIEW', 'at 21 DTE; never hold an option near the strike into expiry day'],
   ['TIME', '10:00–15:30 ET only'],
 ];
@@ -117,7 +117,8 @@ function logCalc() {
   const days = s.dateOpen && s.dateClose ? Math.max(1, Math.round((new Date(s.dateClose) - new Date(s.dateOpen)) / 86400000)) : null;
   const annualized = roc != null && days ? (roc * 365) / days : null;
   const takeProfit = Math.floor((entry * 50) / 100 * 100) / 100;
-  return { entry, close, q, fees, gross, net, roc, days, annualized, takeProfit };
+  const walkAway = Math.floor((entry * 20) / 100 * 100) / 100; // keep ~80%
+  return { entry, close, q, fees, gross, net, roc, days, annualized, takeProfit, walkAway };
 }
 function logContentHtml() {
   const c = logCalc();
@@ -142,7 +143,8 @@ function logContentHtml() {
       <div class="kv"><span>NET P&L</span><span class="${c.net >= 0 ? 'positive' : 'negative'}">${money(c.net)}</span></div>
       <div class="kv"><span>Return on capital</span><span>${pct(c.roc)}</span></div>
       <div class="kv"><span>Annualized</span><span>${pct(c.annualized)}${c.days ? ` <span class="muted">(${c.days} days)</span>` : ''}</span></div>
-      <div class="kv"><span>Suggested take-profit (50% of entry)</span><span>${money(c.takeProfit)}</span></div>
+      <div class="kv"><span>Take-profit (50% of entry)</span><span>${money(c.takeProfit)}</span></div>
+      <div class="kv"><span>Walk-away GTC (keep ~80% → buy at 20% of entry)</span><span>${money(c.walkAway)}</span></div>
     </div>
     <label class="rb-item"><input type="checkbox" data-log="gtcGone" ${logState.gtcGone ? 'checked' : ''}/><span class="rb-ico">☐</span><span class="rb-text">Make sure no orders are left over under Orders. The GTC should be gone.</span></label>
     <label class="rb-item"><input type="checkbox" data-log="positionGone" ${logState.positionGone ? 'checked' : ''}/><span class="rb-ico">☐</span><span class="rb-text">Make sure the position no longer appears in Portfolio.</span></label>

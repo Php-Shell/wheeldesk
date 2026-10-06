@@ -22,7 +22,7 @@ import {
 import { blackScholes } from '../src/greeks.js';
 import { evaluateChecklist, buildChecklistContext, CHECKLIST, itemLink, manualFieldFor } from '../src/checklist.js';
 import { toCsv } from '../src/export.js';
-import { money, dte, marketStatus, toDMY, parseDMY } from '../src/format.js';
+import { money, dte, marketStatus, toDMY, parseDMY, tradingCountdown, fmtDur } from '../src/format.js';
 
 test('put metrics match the documented example', () => {
   const m = putMetrics({ strike: 50, mid: 1.2, contracts: 1, commission: 0.65, daysToExpiry: 30, stockPrice: 52, delta: -0.22 });
@@ -151,6 +151,20 @@ test('money and dte format predictably', () => {
   assert.equal(money(null), '—');
   const days = dte('2030-01-01', new Date('2029-12-02T12:00:00Z'));
   assert.equal(days, 31);
+});
+
+test('trading countdown follows the 10:00–15:30 ET safe window', () => {
+  // 2026-10-01 is EDT (UTC-4): 14:30 UTC = 10:30 ET.
+  assert.equal(tradingCountdown(new Date('2026-10-01T14:30:00Z')).state, 'open');
+  assert.equal(tradingCountdown(new Date('2026-10-01T14:30:00Z')).seconds, 18000); // 5h to 15:30
+  // 13:00 UTC = 09:00 ET → opens in 1h.
+  assert.equal(tradingCountdown(new Date('2026-10-01T13:00:00Z')).state, 'pre');
+  assert.equal(tradingCountdown(new Date('2026-10-01T13:00:00Z')).seconds, 3600);
+  // 20:00 UTC Thu = 16:00 ET → next weekday (Fri) 10:00 → 18h.
+  assert.equal(tradingCountdown(new Date('2026-10-01T20:00:00Z')).seconds, 64800);
+  // Friday 16:00 ET → next weekday Monday 10:00 → 66h.
+  assert.equal(tradingCountdown(new Date('2026-10-02T20:00:00Z')).seconds, 237600);
+  assert.equal(fmtDur(3661), '1h 01m 01s');
 });
 
 test('market status returns a known shape', () => {
