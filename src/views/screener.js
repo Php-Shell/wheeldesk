@@ -1,7 +1,7 @@
 import { buildChecklistContext, evaluateChecklist, CHECKLIST_GROUPS, STATUS_META } from '../checklist.js';
 import { mergeSettings, putMetrics, DEFAULT_SETTINGS } from '../calc.js';
 import { money, pct, escapeHtml, dte, fmtInZone, localTimeZone, toDMY, parseDMY } from '../format.js';
-import { badge, tip, toast, chartColors } from '../ui.js';
+import { badge, tip, toast, chartColors, openModal } from '../ui.js';
 
 const openSet = new Set();
 const drafts = new Map();
@@ -366,6 +366,44 @@ function focusManualField(sym, key, root) {
   setTimeout(clear, 8000);
 }
 
+// Let the user consciously override any Borderline / Fail / Not-verified item.
+function openOverride(ctx, sym, id) {
+  const w = ctx.state.watchlist.find((x) => x.symbol === sym);
+  const existing = w?.overrides?.[id];
+  openModal(`Override checklist item ${id}`, `
+    <p class="muted">Only override after checking it yourself. Your reason is saved with this ticker and shown on the item.</p>
+    <div class="field"><label>Set to</label>
+      <select id="ovStatus">
+        <option value="pass" ${existing?.status === 'pass' ? 'selected' : ''}>Pass (accept it)</option>
+        <option value="warn" ${existing?.status === 'warn' ? 'selected' : ''}>Borderline (accept, keep a warning)</option>
+      </select></div>
+    <div class="field"><label>Reason (required)</label>
+      <textarea id="ovReason" placeholder="e.g. verified market cap on Nasdaq / happy to own it">${escapeHtml(existing?.reason || '')}</textarea></div>
+    <div class="row" style="justify-content:flex-end;gap:8px">
+      ${existing ? '<button class="btn btn-secondary" id="ovClear">Clear override</button>' : ''}
+      <button class="btn btn-primary" id="ovSave">Save override</button>
+    </div>`, (body, close) => {
+    body.querySelector('#ovSave').onclick = () => {
+      const status = body.querySelector('#ovStatus').value;
+      const reason = body.querySelector('#ovReason').value.trim();
+      if (!reason) { toast('Please write a short reason for the override.', 'warn'); return; }
+      const overrides = { ...(w?.overrides || {}), [id]: { status, reason, at: new Date().toISOString() } };
+      ctx.actions.updateWatchQuiet(sym, { overrides });
+      close();
+      toast(`Override saved for ${id}.`);
+      ctx.reload();
+    };
+    body.querySelector('#ovClear')?.addEventListener('click', () => {
+      const overrides = { ...(w?.overrides || {}) };
+      delete overrides[id];
+      ctx.actions.updateWatchQuiet(sym, { overrides });
+      close();
+      toast('Override cleared.');
+      ctx.reload();
+    });
+  });
+}
+
 function openWheelFromSetup(sym, ctx) {
   const draft = drafts.get(sym);
   const w = ctx.state.watchlist.find((x) => x.symbol === sym);
@@ -413,7 +451,7 @@ function checklistHtml(w, ctx) {
     exDividend: draft.exDividend === '' ? null : draft.exDividend,
     dividendAmount: draft.dividendAmount === '' ? null : draft.dividendAmount,
   };
-  const context = buildChecklistContext({ state: ctx.state, data: w.data, option, manual, settings: ctx.state.settings });
+  const context = buildChecklistContext({ state: ctx.state, data: w.data, option, manual, settings: ctx.state.settings, overrides: w.overrides });
   const result = evaluateChecklist(context);
   const verdictClass = result.verdict.className === 'pass' ? 'pass' : result.verdict.className === 'warn' ? 'warn' : 'fail';
   const ringColor = `var(--${verdictClass === 'pass' ? 'brand' : verdictClass === 'warn' ? 'amber' : 'red'})`;
@@ -426,8 +464,9 @@ function checklistHtml(w, ctx) {
           <span class="check-ico" title="${escapeHtml(i.meta.label)}">${i.meta.icon}</span>
           <div><div class="check-label">${i.id} · ${tip(escapeHtml(i.label), i.why)}</div>
           <div class="check-detail">${escapeHtml(i.detail || i.meta.label)}${i.link ? ` <a href="${i.link}" target="_blank" rel="noopener" style="font-weight:600;white-space:nowrap">find ↗</a>` : ''}</div>
-          ${i.manualField && i.status !== 'pass' ? `<button class="btn btn-ghost btn-sm" data-manual-entry="${i.manualField}" data-sym="${w.symbol}" style="padding:2px 8px;margin-top:4px">✎ manual entry ↓</button>` : ''}</div>
-          <span class="badge ${i.status}">${escapeHtml(i.meta.label)}</span>
+          ${i.manualField && i.status !== 'pass' ? `<button class="btn btn-ghost btn-sm" data-manual-entry="${i.manualField}" data-sym="${w.symbol}" style="padding:2px 8px;margin-top:4px">✎ manual entry ↓</button>` : ''}
+          ${i.overridden ? `<button class="btn btn-ghost btn-sm" data-override="${i.id}" data-sym="${w.symbol}" style="padding:2px 8px;margin-top:4px">↺ clear override</button>` : (i.status !== 'pass' ? `<button class="btn btn-ghost btn-sm" data-override="${i.id}" data-sym="${w.symbol}" style="padding:2px 8px;margin-top:4px">✔ override</button>` : '')}</div>
+          <span class="badge ${i.status}">${escapeHtml(i.meta.label)}${i.overridden ? ' (override)' : ''}</span>
         </div>`).join('')}</div>`;
   }).join('');
 
@@ -494,7 +533,15 @@ function watchBody(w, ctx) {
     <div class="grid grid-3" style="margin-bottom:8px">
       <div class="kv"><span>Price</span><span>${eff('price', data?.quote?.price) != null ? money(eff('price', data?.quote?.price)) : '—'}</span></div>
       <div class="kv"><span>Market cap</span><span>${eff('marketCap', data?.profile?.marketCap) != null ? money(eff('marketCap', data?.profile?.marketCap), 'USD', 0) : '—'}</span></div>
-      <div class="kv"><span>Trailing EPS</span><span>${eff('epsTTM', data?.metrics?.epsTTM) != null && Number.isFinite(Number(eff('epsTTM', data?.metrics?.epsTTM))) ? Number(eff('epsTTM', data?.metrics?.epsTTM)).toFixed(2) : fmt(eff('epsTTM', data?.metrics?.epsTTM))}</span></div>
+      <div class="kv"><span>TTM EPS <span class="muted">(last 4 quarters)</span></span><span>${(() => {
+        const manualEps = draft.epsTTM !== '' ? draft.epsTTM : null;
+        const quarterly = data?.metrics?.epsTTMFromQuarters;
+        const vendor = data?.metrics?.epsTTM;
+        const primary = manualEps ?? quarterly ?? vendor;
+        if (primary == null) return '—';
+        const note = !manualEps && quarterly != null && vendor != null && Math.abs(Number(quarterly) - Number(vendor)) >= 0.01 ? ` <span class="muted" title="provider TTM">(vendor ${Number(vendor).toFixed(2)})</span>` : '';
+        return `${Number.isFinite(Number(primary)) ? Number(primary).toFixed(2) : fmt(primary)}${note}`;
+      })()}</span></div>
       <div class="kv"><span>Avg volume</span><span>${eff('avgVolume', data?.metrics?.avgVolume) != null ? `${(Number(eff('avgVolume', data?.metrics?.avgVolume)) / 1e6).toFixed(2)}M` : '—'}</span></div>
       <div class="kv"><span>52-week range</span><span>${data?.metrics?.low52 != null && data?.metrics?.high52 != null ? `${money(data.metrics.low52)} – ${money(data.metrics.high52)}` : '—'}</span></div>
       <div class="kv"><span>Price vs 200-DMA</span><span>${vsMa != null ? `${Number(vsMa) >= 0 ? '+' : ''}${Number(vsMa).toFixed(1)}%` : '—'}</span></div>
@@ -791,6 +838,8 @@ export default {
     root.onclick = (e) => {
       const me = e.target.closest('[data-manual-entry]');
       if (me) { e.preventDefault(); focusManualField(me.dataset.sym, me.dataset.manualEntry, root); return; }
+      const ov = e.target.closest('[data-override]');
+      if (ov) { e.preventDefault(); openOverride(ctx, ov.dataset.sym, ov.dataset.override); return; }
       const r = e.target.closest('[data-refresh]');
       if (r) { requested.delete(r.dataset.refresh); loadData(r.dataset.refresh, ctx).then(() => ctx.reload()); return; }
       const o = e.target.closest('[data-open-wheel]');

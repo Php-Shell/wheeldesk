@@ -32,23 +32,26 @@ export const CHECKLIST = [
     const mc = toNum(c.profile?.marketCap, null);
     const s = mergeSettings(c.settings).thresholds;
     if (mc === null) return { status: 'unknown', detail: 'Market cap unavailable — enter it manually.' };
-    if (mc >= s.marketCap) return { status: 'pass', detail: `Market cap ${money(mc, 'USD', 0)}.` };
-    if (mc >= s.marketCapWarn) return { status: 'warn', detail: `Market cap ${money(mc, 'USD', 0)} is between $2B and $10B.` };
-    return { status: 'fail', detail: `Market cap ${money(mc, 'USD', 0)} is below $2B.` };
+    if (mc >= s.marketCap) return { status: 'pass', detail: `Market cap ${money(mc, 'USD', 0)} (≥ ${money(s.marketCap, 'USD', 0)}).` };
+    if (mc >= s.marketCapWarn) return { status: 'warn', detail: `Market cap ${money(mc, 'USD', 0)} is between ${money(s.marketCapWarn, 'USD', 0)} and ${money(s.marketCap, 'USD', 0)}.` };
+    return { status: 'fail', detail: `Market cap ${money(mc, 'USD', 0)} is below ${money(s.marketCapWarn, 'USD', 0)}.` };
   }),
 
   item('A3', 'A', 'Profitable over the last 12 months', 'Uses diluted earnings per share (EPS) over the trailing 12 months. A profitable company is less likely to fall sharply on bad news.', (c) => {
     const quarterly = toNum(c.metrics?.epsTTMFromQuarters, null);
     const vendor = toNum(c.metrics?.epsTTM, null);
     const eps = quarterly ?? vendor;
-    if (eps === null) return { status: 'unknown', detail: 'Trailing EPS unavailable — enter it manually (Yahoo key-statistics → Diluted EPS (ttm)).' };
-    const source = quarterly != null ? 'sum of the last 4 reported quarters' : 'Finnhub TTM';
+    if (eps === null) return { status: 'unknown', detail: 'Trailing EPS unavailable — enter it manually (StockAnalysis → Statistics → EPS (ttm)).' };
+    const source = quarterly != null ? 'sum of the last 4 reported quarters' : 'provider TTM';
+    const both = quarterly != null && vendor != null && Math.abs(quarterly - vendor) >= 0.01
+      ? ` Provider TTM shows ${vendor.toFixed(2)}.`
+      : '';
     if (quarterly != null && vendor != null && Math.sign(quarterly) !== Math.sign(vendor)) {
-      return { status: 'warn', detail: `Sources disagree: quarterly TTM EPS ${quarterly.toFixed(2)} vs vendor TTM ${vendor.toFixed(2)} — verify before relying on it.` };
+      return { status: 'warn', detail: `Sources disagree: quarters sum ${quarterly.toFixed(2)} vs provider ${vendor.toFixed(2)} — verify before relying on it.` };
     }
     return eps > 0
-      ? { status: 'pass', detail: `Trailing 12-month EPS is ${eps.toFixed(2)} (${source}).` }
-      : { status: 'fail', detail: `Trailing 12-month EPS is negative (${eps.toFixed(2)}, ${source}).` };
+      ? { status: 'pass', detail: `Trailing 12-month EPS is ${eps.toFixed(2)} (${source}).${both}` }
+      : { status: 'fail', detail: `Trailing 12-month EPS is negative (${eps.toFixed(2)}, ${source}).${both}` };
   }),
 
   item('A4', 'A', 'Not in a severe downtrend', 'A severe downtrend (well below the 200-day average) is a falling knife. A small dip below the average is not necessarily a problem.', (c) => {
@@ -211,7 +214,7 @@ export const CHECKLIST = [
 const yahoo = (s) => `https://finance.yahoo.com/quote/${encodeURIComponent(s)}`;
 export const ITEM_LINKS = {
   A2: (s) => `${yahoo(s)}/key-statistics`,
-  A3: (s) => `${yahoo(s)}/key-statistics`,
+  A3: (s) => `https://stockanalysis.com/stocks/${encodeURIComponent(s.toLowerCase())}/statistics/`,
   A4: (s) => `https://www.tradingview.com/chart/?symbol=${encodeURIComponent(s)}`,
   A5: (s) => `${yahoo(s)}/key-statistics`,
   A6: (s) => `https://finviz.com/quote.ashx?t=${encodeURIComponent(s)}`,
@@ -262,6 +265,7 @@ export const STATUS_META = {
 };
 
 export function evaluateChecklist(context) {
+  const overrides = context.overrides || {};
   const results = CHECKLIST.map((entry) => {
     let out;
     try {
@@ -269,7 +273,15 @@ export function evaluateChecklist(context) {
     } catch (err) {
       out = { status: 'unknown', detail: 'Could not evaluate with the available data.' };
     }
-    return { ...entry, ...out, link: itemLink(entry.id, context.symbol), manualField: manualFieldFor(entry.id), meta: STATUS_META[out.status] || STATUS_META.unknown };
+    const base = { ...entry, ...out, link: itemLink(entry.id, context.symbol), manualField: manualFieldFor(entry.id) };
+    // A user override wins (with a reason), so any Borderline/Fail/Not-verified
+    // item can be consciously accepted.
+    const ov = overrides[entry.id];
+    if (ov && ov.status) {
+      const meta = STATUS_META[ov.status] || STATUS_META.pass;
+      return { ...base, status: ov.status, overridden: true, overrideReason: ov.reason || '', originalStatus: out.status, detail: `Overridden to ${meta.label}${ov.reason ? ` — ${ov.reason}` : ''} (was: ${STATUS_META[out.status]?.label || out.status}).`, meta };
+    }
+    return { ...base, meta: STATUS_META[out.status] || STATUS_META.unknown };
   });
   const passCount = results.filter((r) => r.status === 'pass').length;
   const failCount = results.filter((r) => r.status === 'fail').length;
@@ -301,7 +313,7 @@ export function evaluateChecklist(context) {
 
 // Build the context object from the fetched data + manual inputs.
 // Any manual value the user types overrides the fetched one (manual wins).
-export function buildChecklistContext({ state, data, option, manual, settings }) {
+export function buildChecklistContext({ state, data, option, manual, settings, overrides }) {
   const s = mergeSettings(settings || state?.settings);
   const m = manual || {};
   const has = (v) => v !== undefined && v !== null && v !== '';
@@ -353,6 +365,7 @@ export function buildChecklistContext({ state, data, option, manual, settings })
     option: option || null,
     putMetrics: metrics,
     manual: m,
+    overrides: overrides || {},
     settings: s,
     budget,
     portfolio: {

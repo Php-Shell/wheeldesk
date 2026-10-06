@@ -4,7 +4,16 @@ export const CURRENCY_SYMBOLS = { USD: '$', EUR: '€', GBP: '£', CAD: 'C$', AU
 
 export function toNum(value, fallback = null) {
   if (value === null || value === undefined || value === '') return fallback;
-  const n = Number(value);
+  if (typeof value === 'number') return Number.isFinite(value) ? value : fallback;
+  // Tolerate what people actually type/paste: "6,922,408,993", "$6.9B", "1.2m".
+  let s = String(value).trim();
+  const suffix = /^(-?\d*\.?\d+)\s*([bmk])$/i.exec(s.replace(/[$€£\s,]/g, ''));
+  if (suffix) {
+    const mult = { b: 1e9, m: 1e6, k: 1e3 }[suffix[2].toLowerCase()];
+    return Number(suffix[1]) * mult;
+  }
+  s = s.replace(/[$€£,\s]/g, '');
+  const n = Number(s);
   return Number.isFinite(n) ? n : fallback;
 }
 
