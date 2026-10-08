@@ -67,11 +67,12 @@ export const CHECKLIST = [
       if (c.manual?.trendOverride) return { status: 'pass', detail: `200-day average unavailable. Your override: ${c.manual.trendOverride}` };
       return { status: 'unknown', detail: '200-day average unavailable — check the chart or override with a reason.' };
     }
+    const help = `"Severe" here just means the price is more than ${Math.abs(failPct)}% below its 200-day average (200-DMA). The chart's 200-DMA line and this % are the same number: (price − 200-DMA) ÷ 200-DMA. If 200-DMA is 13.48 and the price is ~12.11, that's (12.11 − 13.48) ÷ 13.48 = −${Math.abs(v).toFixed(1)}%, which is past your −${Math.abs(failPct)}% line. It is a label, not a judgment — change the line in Settings → Checklist thresholds → "A4 fail".`;
     if (v >= 0) return { status: 'pass', detail: `Price is ${v.toFixed(1)}% above its 200-day average.` };
     if (v >= passPct) return { status: 'pass', detail: `Price is ${Math.abs(v).toFixed(1)}% below its 200-day average — within the ${Math.abs(passPct)}% tolerance, so not a severe downtrend.` };
-    if (v >= failPct) return { status: 'warn', detail: `Price is ${Math.abs(v).toFixed(1)}% below its 200-day average — a mild downtrend, watch it.` };
-    if (c.manual?.trendOverride) return { status: 'warn', detail: `Price is ${Math.abs(v).toFixed(1)}% below the 200-day average (severe). Your override: ${c.manual.trendOverride}` };
-    return { status: 'fail', detail: `Price is ${Math.abs(v).toFixed(1)}% below its 200-day average — a severe downtrend.` };
+    if (v >= failPct) return { status: 'warn', detail: `Price is ${Math.abs(v).toFixed(1)}% below its 200-day average — a mild downtrend, watch it.`, help };
+    if (c.manual?.trendOverride) return { status: 'warn', detail: `Price is ${Math.abs(v).toFixed(1)}% below the 200-day average (past your −${Math.abs(failPct)}% line). Your override: ${c.manual.trendOverride}`, help };
+    return { status: 'fail', detail: `Price is ${Math.abs(v).toFixed(1)}% below its 200-day average — past your −${Math.abs(failPct)}% "severe downtrend" line (default −10%).`, help };
   }),
 
   item('A5', 'A', 'Average daily volume at least 1M shares', 'Liquid stock is easier to trade and to exit.', (c) => {

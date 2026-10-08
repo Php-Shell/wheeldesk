@@ -464,7 +464,7 @@ function checklistHtml(w, ctx) {
         <div class="check-item ${i.status}">
           <span class="check-ico" title="${escapeHtml(i.meta.label)}">${i.meta.icon}</span>
           <div><div class="check-label">${i.id} · ${tip(escapeHtml(i.label), i.why)}</div>
-          <div class="check-detail">${escapeHtml(i.detail || i.meta.label)}${i.link ? ` <a href="${i.link}" target="_blank" rel="noopener" style="font-weight:600;white-space:nowrap">find ↗</a>` : ''}</div>
+          <div class="check-detail">${escapeHtml(i.detail || i.meta.label)}${i.help ? ` ${tip('?', i.help)}` : ''}${i.link ? ` <a href="${i.link}" target="_blank" rel="noopener" style="font-weight:600;white-space:nowrap">find ↗</a>` : ''}</div>
           ${i.manualField && i.status !== 'pass' ? `<button class="btn btn-ghost btn-sm" data-manual-entry="${i.manualField}" data-sym="${w.symbol}" style="padding:2px 8px;margin-top:4px">✎ manual entry ↓</button>` : ''}
           ${i.overridden ? `<button class="btn btn-ghost btn-sm" data-override="${i.id}" data-sym="${w.symbol}" style="padding:2px 8px;margin-top:4px">↺ clear override</button>` : (i.status !== 'pass' ? `<button class="btn btn-ghost btn-sm" data-override="${i.id}" data-sym="${w.symbol}" style="padding:2px 8px;margin-top:4px">✔ override</button>` : '')}</div>
           <span class="badge ${i.status}">${escapeHtml(i.meta.label)}${i.overridden ? ' (override)' : ''}</span>
