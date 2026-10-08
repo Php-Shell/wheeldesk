@@ -202,6 +202,29 @@ test('delta 0.30 is a pass (rounding tolerance) and A4 tolerates a small dip', (
   assert.equal(byId(deep).A4, 'fail');
 });
 
+test('A2 passes a $48B cap even when a profile set a high threshold', () => {
+  const settings = { ...DEFAULT_SETTINGS, thresholds: { ...DEFAULT_SETTINGS.thresholds, marketCap: 50e9, marketCapWarn: 10e9 } };
+  const ctx = buildChecklistContext({
+    state: { account: { budget: 10000, cash: 10000 }, wheels: [], settings },
+    data: { symbol: 'F', quote: { price: 12 }, profile: { marketCap: 48_329_656_217, industry: 'Auto' }, metrics: { epsTTM: -1.88, avgVolume: 5e7 }, priceVsMa200: 1, earnings: { nextDate: '2027-01-01' }, dividends: {} },
+    option: null, manual: {},
+  });
+  const a2 = evaluateChecklist(ctx).items.find((i) => i.id === 'A2');
+  assert.equal(a2.status, 'pass');
+});
+
+test('A3 trusts the provider TTM over a conflicting quarterly sum', () => {
+  const ctx = buildChecklistContext({
+    state: { account: { budget: 10000, cash: 10000 }, wheels: [], settings: DEFAULT_SETTINGS },
+    data: { symbol: 'F', quote: { price: 12 }, profile: { marketCap: 48e9 }, metrics: { epsTTM: -1.88, epsTTMFromQuarters: 1.66, avgVolume: 5e7 }, priceVsMa200: 1, earnings: {}, dividends: {} },
+    option: null, manual: {},
+  });
+  const a3 = evaluateChecklist(ctx).items.find((i) => i.id === 'A3');
+  assert.equal(a3.status, 'fail');
+  assert.match(a3.detail, /provider TTM/);
+  assert.match(a3.detail, /-1\.88/);
+});
+
 test('C15 resolves dividend status instead of staying unverified', () => {
   const mk = (dividends, metrics) => buildChecklistContext({
     state: { account: { budget: 10000, cash: 10000 }, wheels: [], settings: DEFAULT_SETTINGS },

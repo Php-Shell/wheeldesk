@@ -31,27 +31,31 @@ export const CHECKLIST = [
   item('A2', 'A', 'Market cap is at least $10B', 'Large caps are usually more stable and their options are more liquid.', (c) => {
     const mc = toNum(c.profile?.marketCap, null);
     const s = mergeSettings(c.settings).thresholds;
-    if (mc === null) return { status: 'unknown', detail: 'Market cap unavailable — enter it manually.' };
-    if (mc >= s.marketCap) return { status: 'pass', detail: `Market cap ${money(mc, 'USD', 0)} (≥ ${money(s.marketCap, 'USD', 0)}).` };
-    if (mc >= s.marketCapWarn) return { status: 'warn', detail: `Market cap ${money(mc, 'USD', 0)} is between ${money(s.marketCapWarn, 'USD', 0)} and ${money(s.marketCap, 'USD', 0)}.` };
-    return { status: 'fail', detail: `Market cap ${money(mc, 'USD', 0)} is below ${money(s.marketCapWarn, 'USD', 0)}.` };
+    // The standard rule is a fixed $10B pass / $2B warn. A profile may make it
+    // STRICTER (lower), but must never raise the bar above the standard rule.
+    const passAt = Math.min(toNum(s.marketCap, 10e9) || 10e9, 10e9);
+    const warnAt = Math.min(toNum(s.marketCapWarn, 2e9) || 2e9, 2e9);
+    const label = `Market cap is at least ${money(passAt, 'USD', 0)}`;
+    if (mc === null) return { status: 'unknown', detail: 'Market cap unavailable — enter it manually.', label };
+    if (mc >= passAt) return { status: 'pass', detail: `Market cap ${money(mc, 'USD', 0)} is at or above ${money(passAt, 'USD', 0)}.`, label };
+    if (mc >= warnAt) return { status: 'warn', detail: `Market cap ${money(mc, 'USD', 0)} is between ${money(warnAt, 'USD', 0)} and ${money(passAt, 'USD', 0)}.`, label };
+    return { status: 'fail', detail: `Market cap ${money(mc, 'USD', 0)} is below ${money(warnAt, 'USD', 0)}.`, label };
   }),
 
   item('A3', 'A', 'Profitable over the last 12 months', 'Uses diluted earnings per share (EPS) over the trailing 12 months. A profitable company is less likely to fall sharply on bad news.', (c) => {
-    const quarterly = toNum(c.metrics?.epsTTMFromQuarters, null);
-    const vendor = toNum(c.metrics?.epsTTM, null);
-    const eps = quarterly ?? vendor;
-    if (eps === null) return { status: 'unknown', detail: 'Trailing EPS unavailable — enter it manually (StockAnalysis → Statistics → EPS (ttm)).' };
-    const source = quarterly != null ? 'sum of the last 4 reported quarters' : 'provider TTM';
-    const both = quarterly != null && vendor != null && Math.abs(quarterly - vendor) >= 0.01
-      ? ` Provider TTM shows ${vendor.toFixed(2)}.`
+    const vendor = toNum(c.metrics?.epsTTM, null);       // provider TTM (authoritative)
+    const quarterly = toNum(c.metrics?.epsTTMFromQuarters, null); // cross-check only
+    const eps = vendor ?? quarterly;
+    if (eps === null) return { status: 'unknown', detail: 'Trailing EPS unavailable — enter it manually. Verify on the link: Income Statement → EPS / Loss per share (TTM).' };
+    const source = vendor != null ? 'provider TTM' : 'sum of last 4 quarters';
+    // Quarterly "actuals" are usually adjusted and often differ from GAAP TTM,
+    // so the TTM value wins and the quarters figure is only a note.
+    const note = vendor != null && quarterly != null && Math.abs(vendor - quarterly) >= 0.05
+      ? ` Cross-check: last-4-quarters sum ${quarterly.toFixed(2)} (quarterly figures are often adjusted). Verify on the link: Income Statement → EPS / Loss per share (TTM).`
       : '';
-    if (quarterly != null && vendor != null && Math.sign(quarterly) !== Math.sign(vendor)) {
-      return { status: 'warn', detail: `Sources disagree: quarters sum ${quarterly.toFixed(2)} vs provider ${vendor.toFixed(2)} — verify before relying on it.` };
-    }
     return eps > 0
-      ? { status: 'pass', detail: `Trailing 12-month EPS is ${eps.toFixed(2)} (${source}).${both}` }
-      : { status: 'fail', detail: `Trailing 12-month EPS is negative (${eps.toFixed(2)}, ${source}).${both}` };
+      ? { status: 'pass', detail: `Trailing 12-month EPS is ${eps.toFixed(2)} (${source}).${note}` }
+      : { status: 'fail', detail: `Trailing 12-month EPS is negative (${eps.toFixed(2)}, ${source}).${note}` };
   }),
 
   item('A4', 'A', 'Not in a severe downtrend', 'A severe downtrend (well below the 200-day average) is a falling knife. A small dip below the average is not necessarily a problem.', (c) => {

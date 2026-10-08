@@ -425,6 +425,7 @@ function dataLinks(sym) {
   return {
     quote: `https://finance.yahoo.com/quote/${s}`,
     stats: `https://finance.yahoo.com/quote/${s}/key-statistics`,
+    eps: `https://stockanalysis.com/stocks/${sl}/statistics/`,
     chart: `https://www.tradingview.com/chart/?symbol=${s}`,
     stockcharts: `https://stockcharts.com/h-sc/ui?s=${s}`,
     finviz: `https://finviz.com/quote.ashx?t=${s}`,
@@ -533,13 +534,13 @@ function watchBody(w, ctx) {
     <div class="grid grid-3" style="margin-bottom:8px">
       <div class="kv"><span>Price</span><span>${eff('price', data?.quote?.price) != null ? money(eff('price', data?.quote?.price)) : '—'}</span></div>
       <div class="kv"><span>Market cap</span><span>${eff('marketCap', data?.profile?.marketCap) != null ? money(eff('marketCap', data?.profile?.marketCap), 'USD', 0) : '—'}</span></div>
-      <div class="kv"><span>TTM EPS <span class="muted">(last 4 quarters)</span></span><span>${(() => {
+      <div class="kv"><span>TTM EPS <span class="muted">(trailing 12 months)</span></span><span>${(() => {
         const manualEps = draft.epsTTM !== '' ? draft.epsTTM : null;
-        const quarterly = data?.metrics?.epsTTMFromQuarters;
         const vendor = data?.metrics?.epsTTM;
-        const primary = manualEps ?? quarterly ?? vendor;
+        const quarterly = data?.metrics?.epsTTMFromQuarters;
+        const primary = manualEps ?? vendor ?? quarterly;
         if (primary == null) return '—';
-        const note = !manualEps && quarterly != null && vendor != null && Math.abs(Number(quarterly) - Number(vendor)) >= 0.01 ? ` <span class="muted" title="provider TTM">(vendor ${Number(vendor).toFixed(2)})</span>` : '';
+        const note = !manualEps && vendor != null && quarterly != null && Math.abs(Number(quarterly) - Number(vendor)) >= 0.05 ? ` <span class="muted" title="sum of last 4 quarterly actuals (often adjusted)">(4Q sum ${Number(quarterly).toFixed(2)})</span>` : '';
         return `${Number.isFinite(Number(primary)) ? Number(primary).toFixed(2) : fmt(primary)}${note}`;
       })()}</span></div>
       <div class="kv"><span>Avg volume</span><span>${eff('avgVolume', data?.metrics?.avgVolume) != null ? `${(Number(eff('avgVolume', data?.metrics?.avgVolume)) / 1e6).toFixed(2)}M` : '—'}</span></div>
@@ -562,7 +563,7 @@ function watchBody(w, ctx) {
     <div class="grid grid-3">
       ${manualField(w.symbol, 'price', 'Price', 'A1', links.quote, draft, '61.20')}
       ${manualField(w.symbol, 'marketCap', 'Market cap ($)', 'A2', links.stats, draft, '260000000000')}
-      ${manualField(w.symbol, 'epsTTM', 'TTM EPS (diluted)', 'A3', links.stats, draft, '2.40')}
+      ${manualField(w.symbol, 'epsTTM', 'TTM EPS (diluted)', 'A3', links.eps, draft, '2.40')}
       ${manualField(w.symbol, 'priceVsMa200', 'Price vs 200-DMA (%)', 'A4', links.chart, draft, '+3.5 or -6')}
       ${manualField(w.symbol, 'avgVolume', 'Average daily volume', 'A5', links.stats, draft, '14000000')}
       ${manualField(w.symbol, 'ivRank', 'IV Rank (0–100)', 'C12', links.options, draft, '45')}
