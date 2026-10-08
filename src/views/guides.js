@@ -11,7 +11,8 @@ const PUT_PHASES = [
     '1.1 Launch IBKR Desktop → login → choose Paper Trading (paper username/password).',
     '1.2 Search bar → type XYZ → pick the stock result (NYSE/NASDAQ). Not a CFD or foreign listing.',
     '1.3 On the quote page click Options / Option Chain.',
-    '1.4 Columns (gear ⚙️ → Customize): Strike, Bid, Ask, Delta, Open Interest, Volume, Implied Vol.',
+    '1.4 Columns (gear ⚙️ / Customize): make sure you can see Strike, Bid, Ask, Delta, Open Interest, Volume, Implied Vol (add Mid/Mark if available). The price shown is PER SHARE.',
+    '1.4b Where the premium is: Bid = what a buyer pays you now (you SELL at the bid); Ask = what sellers ask; Mid/Mark = (Bid + Ask) ÷ 2 = your limit. × 100 per contract (mid 0.525 → $52.50 per contract) before commission. After a fill, Portfolio shows the Mark/P&L and Orders/Executions shows your actual fill.',
     '1.5 Make sure you are on the PUTS side (puts are usually the right side of the strikes).',
   ], table: [['Column', 'What it tells you'], ['Strike', "Price you'd buy the stock at"], ['Bid', "What buyers pay now (you'd sell here)"], ['Ask', 'What sellers want now'], ['Delta', 'Risk level / chance of assignment'], ['Open Interest', 'Liquidity (contracts existing)'], ['Volume', 'Contracts traded today']] },
   { title: 'Phase 2 — Pick the expiry', items: [
@@ -35,6 +36,7 @@ const PUT_PHASES = [
     '3.3 Liquidity: OI ≥ 500 (100–499 borderline), Volume ≥ 50 (10–49 borderline). Example OI 1,850, Vol 210.',
     '3.4 Money math: Gross = Mid×100; Net = Gross − commission; Collateral = Strike×100; Return = Net ÷ Collateral; Annualized = Return × 365 ÷ DTE; Breakeven = Strike − net premium/share; Cushion = (Price − Strike)/Price.',
     '3.5 Final gut check: "Would I happily own 100 shares of XYZ at $43.36?" If not, stop.',
+    '3.6 Ignore IBKR\'s "Probability of Profit" for a SHORT put. That number is roughly the probability of finishing in the money (i.e. assignment) or the buyer\'s chance — for a −0.165 delta put it shows ~14–16%. What you want is the chance of KEEPING the premium = 1 − |delta| (here 1 − 0.165 ≈ 83%). IBKR\'s 14% and your 83% are the same information, inverted.',
   ], table: [['Figure', 'Formula', 'Example'], ['Gross premium', 'Mid × 100', '0.65 × 100 = $65.00'], ['Net premium', 'Gross − $0.65', '≈ $64.35'], ['Collateral', 'Strike × 100', '44 × 100 = $4,400'], ['Return', 'Net ÷ Collateral', '64.35 ÷ 4,400 = 1.46%'], ['Annualized', 'Return × 365 ÷ DTE', '1.46% × 365 ÷ 38 ≈ 14.0%'], ['Breakeven', 'Strike − net/share', '44 − 0.64 = $43.36'], ['Cushion', '(Price − Strike)/Price', '7.0% below today']] },
   { title: 'Phase 4 — Place the SELL order', items: [
     '4.1 In the $44 put row click the Bid price (0.62) → creates a SELL order. Clicking Ask would create a BUY (wrong).',
